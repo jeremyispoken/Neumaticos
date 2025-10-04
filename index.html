@@ -41,7 +41,7 @@
 
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-    import { getAuth, onAuthStateChanged, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+    import { getAuth, onAuthStateChanged, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
     import { getFirestore, addDoc, onSnapshot, collection, query, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
     import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-storage.js";
 
@@ -92,7 +92,6 @@
     };
 
     const appId = 'flota-track-app';
-    const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
     // === INICIALIZACIÓN (CÓDIGO FUNCIONAL) ===
     async function initializeAppCore() {
@@ -129,18 +128,11 @@
 
     async function attemptInitialSignIn() {
       try {
-        if (initialAuthToken) {
-          await signInWithCustomToken(auth, initialAuthToken);
-        } else {
-          await signInAnonymously(auth);
-        }
+        await signInAnonymously(auth);
       } catch (error) {
         console.error("Fallo el intento de inicio de sesión:", error.code, error.message);
         let friendlyMessage = "Error de autenticación desconocido.";
         switch (error.code) {
-          case 'auth/invalid-custom-token':
-            friendlyMessage = "Token de autenticación inválido o expirado.";
-            break;
           case 'auth/network-request-failed':
             friendlyMessage = "Falla de red. Revisa tu conexión.";
             break;
@@ -268,102 +260,109 @@
 
     window.generatePdf = async function(recordId) {
         displayAppMessage('Generando PDF, por favor espera...', 'info');
+        
+        try {
+            const record = window.currentRecords.find(r => r.id === recordId);
+            if (!record) {
+                throw new Error('Registro no encontrado.');
+            }
 
-        const record = window.currentRecords.find(r => r.id === recordId);
-        if (!record) {
-            displayAppMessage('Error: Registro no encontrado.', 'error');
-            return;
-        }
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF();
 
-        const { jsPDF } = window.jspdf;
-        const doc = new jsPDF();
-
-        // Cabecera del PDF
-        doc.addImage(logoBase64, 'PNG', 15, 10, 50, 16);
-        doc.setFontSize(22);
-        doc.setFont('helvetica', 'bold');
-        doc.text("Registro de Desgaste de Neumáticos", 195, 20, { align: 'right' });
-        doc.setLineWidth(0.5);
-        doc.line(15, 30, 195, 30);
-
-        // Datos generales
-        let yPos = 40;
-        doc.setFontSize(12);
-        doc.setFont('helvetica', 'bold');
-        doc.text("Información General", 15, yPos);
-        yPos += 8;
-        doc.setFont('helvetica', 'normal');
-        doc.text(`N° Orden: ${record.orderNumber}`, 15, yPos);
-        doc.text(`Fecha: ${new Date(record.date).toLocaleDateString('es-CL', {timeZone: 'UTC'})}`, 105, yPos);
-        yPos += 7;
-        doc.text(`Sucursal: ${record.branchName}`, 15, yPos);
-        doc.text(`Kilometraje: ${record.mileage.toLocaleString('es-CL')} km`, 105, yPos);
-        yPos += 7;
-        doc.text(`Tipo de Vehículo: ${record.vehicleType}`, 15, yPos);
-        yPos += 7;
-        doc.text(`Marca/Modelo General: ${record.generalMakeModel}`, 15, yPos);
-        yPos += 7;
-        doc.text(`Medida General: ${record.tireSize}`, 15, yPos);
-        yPos += 7;
-        if(record.generalComments) {
-            const splitComments = doc.splitTextToSize(`Comentarios: ${record.generalComments}`, 180);
-            doc.text(splitComments, 15, yPos);
-            yPos += (splitComments.length * 5);
-        }
-
-        // Tabla de neumáticos
-        const tireData = record.tires.map(t => [t.position, t.makeModel, t.surco1.toFixed(1), t.surco2.toFixed(1), t.surco3.toFixed(1)]);
-        doc.autoTable({
-            startY: yPos + 5,
-            head: [['Posición', 'Marca/Modelo', 'Surco 1 (mm)', 'Surco 2 (mm)', 'Surco 3 (mm)']],
-            body: tireData,
-            theme: 'grid',
-            headStyles: { fillColor: [5, 150, 105] }
-        });
-
-        yPos = doc.lastAutoTable.finalY + 15;
-
-        // Imágenes adjuntas
-        const imageTires = record.tires.filter(t => t.photoURL && t.photoURL !== 'N/A');
-        if (imageTires.length > 0) {
-            doc.setFontSize(14);
+            // Cabecera del PDF
+            doc.addImage(logoBase64, 'PNG', 15, 10, 50, 16);
+            doc.setFontSize(22);
             doc.setFont('helvetica', 'bold');
-            doc.text("Fotografías Adjuntas", 15, yPos);
-            yPos += 10;
+            doc.text("Registro de Desgaste de Neumáticos", 195, 20, { align: 'right' });
+            doc.setLineWidth(0.5);
+            doc.line(15, 30, 195, 30);
+
+            // Datos generales
+            let yPos = 40;
+            doc.setFontSize(12);
+            doc.setFont('helvetica', 'bold');
+            doc.text("Información General", 15, yPos);
+            yPos += 8;
             doc.setFont('helvetica', 'normal');
-            
-            for (const tire of imageTires) {
-                if (yPos > 220) { // Margen para evitar corte de imagen
-                    doc.addPage();
-                    yPos = 20;
-                }
-                try {
-                    const response = await fetch(tire.photoURL);
-                    const blob = await response.blob();
-                    const imageBase64 = await new Promise((resolve, reject) => {
-                        const reader = new FileReader();
-                        reader.onloadend = () => resolve(reader.result);
-                        reader.onerror = reject;
-                        reader.readAsDataURL(blob);
-                    });
+            doc.text(`N° Orden: ${record.orderNumber}`, 15, yPos);
+            doc.text(`Fecha: ${new Date(record.date).toLocaleDateString('es-CL', {timeZone: 'UTC'})}`, 105, yPos);
+            yPos += 7;
+            doc.text(`Sucursal: ${record.branchName}`, 15, yPos);
+            doc.text(`Kilometraje: ${record.mileage.toLocaleString('es-CL')} km`, 105, yPos);
+            yPos += 7;
+            doc.text(`Tipo de Vehículo: ${record.vehicleType}`, 15, yPos);
+            yPos += 7;
+            doc.text(`Marca/Modelo General: ${record.generalMakeModel}`, 15, yPos);
+            yPos += 7;
+            doc.text(`Medida General: ${record.tireSize}`, 15, yPos);
+            yPos += 7;
+            if(record.generalComments) {
+                const splitComments = doc.splitTextToSize(`Comentarios: ${record.generalComments}`, 180);
+                doc.text(splitComments, 15, yPos);
+                yPos += (splitComments.length * 5);
+            }
 
-                    doc.setFontSize(10);
-                    doc.text(`Posición: ${tire.position} (${tire.makeModel})`, 15, yPos);
-                    doc.addImage(imageBase64, 'JPEG', 15, yPos + 3, 80, 60);
-                    yPos += 70;
+            // Tabla de neumáticos
+            const tireData = record.tires.map(t => [t.position, t.makeModel, t.surco1.toFixed(1), t.surco2.toFixed(1), t.surco3.toFixed(1)]);
+            doc.autoTable({
+                startY: yPos + 5,
+                head: [['Posición', 'Marca/Modelo', 'Surco 1 (mm)', 'Surco 2 (mm)', 'Surco 3 (mm)']],
+                body: tireData,
+                theme: 'grid',
+                headStyles: { fillColor: [5, 150, 105] }
+            });
 
-                } catch (e) {
-                    console.error(`No se pudo cargar la imagen para ${tire.position}:`, e);
-                    if (yPos > 280) { doc.addPage(); yPos = 20; }
-                    doc.text(`- Imagen no disponible para la posición ${tire.position}.`, 15, yPos);
-                    yPos += 7;
+            yPos = doc.lastAutoTable.finalY + 15;
+
+            // Imágenes adjuntas
+            const imageTires = record.tires.filter(t => t.photoURL && t.photoURL !== 'N/A');
+            if (imageTires.length > 0) {
+                doc.setFontSize(14);
+                doc.setFont('helvetica', 'bold');
+                doc.text("Fotografías Adjuntas", 15, yPos);
+                yPos += 10;
+                doc.setFont('helvetica', 'normal');
+                
+                for (const tire of imageTires) {
+                    if (yPos > 220) { 
+                        doc.addPage();
+                        yPos = 20;
+                    }
+                    try {
+                        const response = await fetch(tire.photoURL);
+                        const blob = await response.blob();
+                        const imageBase64 = await new Promise((resolve, reject) => {
+                            const reader = new FileReader();
+                            reader.onloadend = () => resolve(reader.result);
+                            reader.onerror = reject;
+                            reader.readAsDataURL(blob);
+                        });
+
+                        doc.setFontSize(10);
+                        doc.text(`Posición: ${tire.position} (${tire.makeModel})`, 15, yPos);
+                        doc.addImage(imageBase64, 'JPEG', 15, yPos + 3, 80, 60);
+                        yPos += 70;
+
+                    } catch (e) {
+                        console.error(`No se pudo cargar la imagen para ${tire.position}:`, e);
+                        if (yPos > 280) { doc.addPage(); yPos = 20; }
+                        doc.text(`- Imagen no disponible para la posición ${tire.position}.`, 15, yPos);
+                        yPos += 7;
+                    }
                 }
             }
-        }
+            
+            // CORRECCIÓN: Abrir en una nueva ventana en lugar de forzar la descarga.
+            // Esto es más compatible con los bloqueadores de pop-ups.
+            doc.output('dataurlnewwindow');
+            
+            displayAppMessage('✅ PDF generado con éxito.', 'success');
 
-        // Guardar PDF
-        doc.save(`Registro_FlotaTRACK_${record.orderNumber}.pdf`);
-        displayAppMessage('✅ PDF generado con éxito.', 'success');
+        } catch (error) {
+            console.error("Error al generar el PDF:", error);
+            displayAppMessage(`Error al generar el PDF: ${error.message}`, 'error');
+        }
     }
     
     // === HELPERS Y UI ===
@@ -853,4 +852,3 @@
   </div>
 </body>
 </html>
-
