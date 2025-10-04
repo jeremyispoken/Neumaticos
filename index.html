@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+    <!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
@@ -29,10 +29,6 @@
     .tab-button.active { border-bottom: 4px solid #059669; font-weight: 600; color: #059669; }
     .form-control { border-radius: 0.5rem; border: 1px solid #d1d5db; padding: 0.5rem 0.75rem; width: 100%; transition: all 0.15s; }
     .form-control:focus { border-color: #059669; box-shadow: 0 0 0 3px rgba(5,150,105,0.5); outline: none; }
-    /* Modal de Análisis */
-    #analysis-modal { position: fixed; inset: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.7); z-index: 50; display: none; justify-content: center; align-items: center; }
-    #analysis-modal.show { display: flex; }
-    .modal-content { background: #fff; padding: 1.5rem; border-radius: 1rem; max-width: 90%; width: 600px; max-height: 90%; overflow-y: auto; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
   </style>
 
   <!-- Firebase + App (ESM) -->
@@ -52,7 +48,8 @@
 
     // === GLOBALS ===
     let app = null, db = null, auth = null, storage = null;
-    let currentUserId = null; // UID de Firebase, se usará como identificador del técnico/dispositivo
+    let currentUserId = null; // UID de Firebase
+    let authReady = false; // Estado para asegurar que Firebase terminó de autenticar
     window.currentRecords = [];
 
     const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
@@ -87,30 +84,43 @@
 
     // === FIREBASE ===
     async function initializeFirebase() {
-      if (!firebaseConfig) { console.error("firebaseConfig no disponible"); return; }
+      if (!firebaseConfig) { 
+        document.getElementById('userIdDisplay').textContent = `ERROR: Configuración de Firebase faltante.`;
+        return; 
+      }
       app = initializeApp(firebaseConfig);
       db = getFirestore(app);
       storage = getStorage(app);
       auth = getAuth(app);
       try {
-        const authResult = await (initialAuthToken ? signInWithCustomToken(auth, initialAuthToken) : signInAnonymously(auth));
+        const idEl = document.getElementById('userIdDisplay');
+        
+        // 1. Intentar autenticación (o con token o anónima)
+        const authResult = await (initialAuthToken ? signInWithCustomToken(auth, initialAuthToken) : signInAnonymously(auth));
         currentUserId = authResult.user.uid;
-        const idEl = document.getElementById('userIdDisplay');
+
+        // 2. Marcar como listo y mostrar ID (soluciona el problema de "Cargando...")
+        authReady = true;
         if(idEl) idEl.textContent = `ID Técnico: ${currentUserId.substring(0, 8)}...`;
+        
+        // 3. Cargar registros después de la autenticación
         loadRecords();
+
       } catch (e) {
         console.error("Error de inicialización de Firebase/Autenticación:", e);
         window.displayMessage('Error de inicialización. Revisa la consola para más detalles.','error');
+        document.getElementById('userIdDisplay').textContent = `ID Técnico: Falló la autenticación`;
       }
     }
 
     let unsubscribe = null; // para limpiar onSnapshot
-    // Modificado para cargar TODOS los registros
+    // Función para cargar TODOS los registros de todas las zonales
     function loadRecords() {
-      if (!db) return;
+      if (!db || !authReady) return;
       if (typeof unsubscribe === 'function') { unsubscribe(); }
+      // Usamos la colección pública para ver todos los datos
       const recordsRef = collection(db, `/artifacts/${appId}/public/data/tire_records`);
-      const q = query(recordsRef); // Sin filtro 'where' para ver todos los datos públicos
+      const q = query(recordsRef); // Sin filtro para ver todos los datos
 
       unsubscribe = onSnapshot(q, (snapshot) => {
         const records = [];
@@ -134,7 +144,9 @@
     window.analyzeRecord = async function(recordId) {
       const record = window.currentRecords.find(r => r.id === recordId);
       if (!record) { window.displayMessage('Registro no encontrado','error'); return; }
-      window.showAnalysisModal(true, record.orderNumber);
+      
+      // 1. Mostrar mensaje de inicio (sustituye al modal de carga)
+      window.displayMessage('Iniciando análisis experto para Orden N° ' + record.orderNumber + '...','info');
 
       const recordDetails = formatRecordForPrompt(record);
       const systemPrompt = "Actúa como ingeniero de mantenimiento de flotas y experto en neumáticos. Analiza el informe de surcos. Indica neumáticos críticos (<3mm) y sugiere plan de acción (rotación, reemplazo, alineación, presión). Usa fuentes web cuando sea útil y lista citas.";
@@ -156,14 +168,24 @@
 
           const result = await res.json();
           const candidate = result?.candidates?.[0];
+          
           const text = candidate?.content?.parts?.[0]?.text || 'No se pudo generar un análisis.';
           const sources = (candidate?.groundingMetadata?.groundingAttributions || []).map(a => ({ uri: a?.web?.uri, title: a?.web?.title })).filter(s => s.uri && s.title);
-          window.showAnalysisModal(false, record.orderNumber, text, sources);
+          
+          // 2. Mostrar mensaje de éxito y detalle en consola (sustituye al modal de resultado)
+          window.displayMessage('✅ Análisis de Orden N° ' + record.orderNumber + ' generado. Revisa la consola para el informe completo.','success');
+          console.log("--- Análisis Gemini Orden N° " + record.orderNumber + " ---");
+          console.log(text);
+          if(sources.length) {
+              console.log("\nFuentes:");
+              sources.forEach(s => console.log(`- ${s.title}: ${s.uri}`));
+          }
+          console.log("-----------------------------------------------------");
+
           return; // Éxito
         } catch (e) {
           if (attempt === MAX_RETRIES - 1) {
             console.error(e);
-            window.showAnalysisModal(false);
             window.displayMessage('Error al conectar con la IA o límite de reintentos alcanzado.','error');
             return;
           }
@@ -191,40 +213,8 @@
     }
 
     // === UI Helpers ===
-    window.showAnalysisModal = function(show, orderNumber = '', analysisText = '', sources = []) {
-      const modal = document.getElementById('analysis-modal');
-      const contentDiv = document.getElementById('analysisContent');
-      const titleDiv = document.getElementById('analysisTitle');
-
-      if (show) {
-        titleDiv.textContent = "Analizando Registro N° " + orderNumber + "...";
-        contentDiv.innerHTML = '<div class="flex flex-col items-center justify-center p-8"><svg class="animate-spin h-8 w-8 text-primary" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg><p class="mt-4 text-gray-600 font-medium">Generando análisis experto con Gemini...</p></div>';
-        modal.classList.add('show');
-      } else if (analysisText) {
-        titleDiv.textContent = "Análisis Técnico IA - Orden N° " + orderNumber;
-        let html = '<p class="whitespace-pre-wrap mb-6 text-gray-700 leading-relaxed">' + analysisText + '</p>';
-        if (sources.length) {
-          html += '<h4 class="text-sm font-bold text-gray-600 mb-2 border-t pt-4">Fuentes Utilizadas:</h4>';
-          sources.forEach(s => { html += '<p class="text-xs text-blue-600 truncate mb-1"><a href="' + s.uri + '" target="_blank" class="hover:underline">' + s.title + '</a></p>'; });
-        } else {
-          html += '<p class="text-xs text-gray-500 mt-4 border-t pt-2">Sin fuentes externas.</p>';
-        }
-        contentDiv.innerHTML = html;
-        modal.classList.add('show');
-      } else {
-        modal.classList.remove('show');
-        contentDiv.innerHTML = '';
-      }
-    }
-
-    window.closeAnalysisModal = function(){ window.showAnalysisModal(false); }
-    document.addEventListener('keydown', (e)=>{ if (e.key === 'Escape') window.showAnalysisModal(false); });
-    window.addEventListener('click', (e)=>{
-      const m = document.getElementById('analysis-modal');
-      const card = document.getElementById('analysis-modal-card');
-      if (!m.classList.contains('show')) return;
-      if (e.target === m) window.showAnalysisModal(false);
-    });
+    // Las funciones window.showAnalysisModal y window.closeAnalysisModal han sido eliminadas.
+    // También se eliminaron los listeners de Escape y click externo relacionados al modal.
 
     window.switchTab = function(tabName) {
       ['guide','register','records'].forEach(tab => {
@@ -307,7 +297,7 @@
 
       const vehicleType = form.vehicleType.value;
       const generalMakeModel = form.makeModel.value;
-      const branchName = form.branchName.value; // Nuevo campo
+      const branchName = form.branchName.value; // Campo Sucursal / Zonal
       const orderNumber = parseInt(form.orderNumber.value);
       const mileage = parseInt(form.mileage.value);
       const dateVal = form.date.value;
@@ -315,7 +305,7 @@
       const generalComments = form.generalComments.value || '';
 
       if (isNaN(orderNumber) || isNaN(mileage) || !dateVal || !generalMakeModel || !tireSize || !branchName) {
-        reviewMessages.push(msg('error','Completa Sucursal, Orden, Kilometraje, Fecha, Medida y Marca/Modelo general.'));
+        reviewMessages.push(msg('error','Completa Sucursal, Nro de orden, Kilometraje, Fecha, Medida y Marca/Modelo general.'));
         finishReview(btn); return displayReview(reviewMessages);
       }
 
@@ -383,12 +373,15 @@
     window.handleSave = async function(){
       const data = window.pendingReviewData;
       if (!data) return window.displayMessage('Evalúa antes de guardar','error');
+      if (!authReady) return window.displayMessage('Error de autenticación. Intenta recargar.','error');
+      
       const saveBtn = document.getElementById('saveButton');
       saveBtn.disabled = true; saveBtn.innerHTML = loaderSvg('Guardando...');
       try {
         const uploaded = await Promise.all((data.photoFiles||[]).map(async it => ({ position: it.position, url: await uploadPhoto(it.file, it.position) })));
         data.tires = data.tires.map(t => { const f = uploaded.find(u => u.position === t.position); return { ...t, photoURL: f ? f.url : t.photoURL }; });
         const { photoFiles, ...finalRecord } = { ...data, timestamp: serverTimestamp() };
+        // Guardando en colección pública para que todos los vean
         const recordsRef = collection(db, "/artifacts/" + appId + "/public/data/tire_records");
         await addDoc(recordsRef, finalRecord);
         window.displayMessage('✅ Registro guardado con éxito','success');
@@ -514,19 +507,8 @@
 </head>
 
 <body class="bg-background min-h-screen flex flex-col">
-    <!-- Modal Análisis IA -->
-    <div id="analysis-modal" role="dialog" aria-modal="true" aria-labelledby="analysisTitle" class="analysis-modal">
-        <div id="analysis-modal-card" class="modal-content w-full sm:w-11/12 md:w-2/3 lg:w-1/2">
-            <div class="flex justify-between items-center mb-4 pb-2 border-b">
-                <h2 id="analysisTitle" class="text-xl font-bold text-primary">Analizando...</h2>
-                <button id="analysisCloseButton" onclick="window.closeAnalysisModal()" class="text-gray-400 hover:text-gray-600" aria-label="Cerrar">
-                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-                </button>
-            </div>
-            <div id="analysisContent" class="py-4 text-sm"></div>
-        </div>
-    </div>
-
+    <!-- El Modal de Análisis IA ha sido removido según solicitud. -->
+    
     <div id="app-container" class="flex flex-col flex-grow">
         <!-- Header -->
         <header class="bg-white shadow-md sticky top-0 z-10">
@@ -537,7 +519,7 @@
                     </h1>
                     <div class="flex items-center space-x-4">
                         <!-- Muestra el ID de sesión generado por Firebase -->
-                        <span id="userIdDisplay" class="text-sm font-medium text-gray-600">Conectando...</span>
+                        <span id="userIdDisplay" class="text-sm font-medium text-gray-600">ID Técnico: Cargando...</span>
                     </div>
                 </div>
             </div>
@@ -603,8 +585,9 @@
                                         <option value="" disabled selected>Selecciona la sucursal donde se tomó la medición...</option>
                                     </select>
                                 </div>
+                                <!-- CAMBIO: Corregido a "Nro de orden" -->
                                 <div>
-                                    <label class="block text-sm font-medium text-gray-700 mb-1" for="orderNumber">N° de Orden de Trabajo</label>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1" for="orderNumber">Nro de orden</label>
                                     <input type="number" id="orderNumber" name="orderNumber" min="1" class="form-control" placeholder="Ej: 4567" required />
                                 </div>
                                 <div>
