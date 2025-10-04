@@ -35,6 +35,10 @@
     .form-control:focus { border-color: #059669; box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.2); outline: none; }
   </style>
 
+  <!-- Librerías para generar PDF -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js"></script>
+
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
     import { getAuth, onAuthStateChanged, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
@@ -76,29 +80,23 @@
     window.currentRecords = [];
     window.pendingReviewData = null;
 
-    const appId = 'flota-track-app'; // Usamos un ID de app fijo para pruebas
+    // --- TUS CREDENCIALES DE FIREBASE ---
+    const firebaseConfig = {
+        apiKey: "AIzaSyBtc4KcGwNr4y79YeI4EdUX9mBSfindhH0",
+        authDomain: "neumaticos-fv.firebaseapp.com",
+        projectId: "neumaticos-fv",
+        storageBucket: "neumaticos-fv.appspot.com",
+        messagingSenderId: "50061965881",
+        appId: "1:50061965881:web:31c43abfeabc0c0ed8ebe8",
+        measurementId: "G-LZVB5CT01W"  
+    };
+
+    const appId = 'flota-track-app';
     const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
-    // === INICIALIZACIÓN (SOLUCIÓN OPERATIVA) ===
+    // === INICIALIZACIÓN (CÓDIGO FUNCIONAL) ===
     async function initializeAppCore() {
       setUiState('loading');
-
-      // --- TUS CREDENCIALES DE FIREBASE ---
-      const firebaseConfig = {
-         apiKey: "AIzaSyBtc4KcGwNr4y79YeI4EdUX9mBSfindhH0",
-         authDomain: "neumaticos-fv.firebaseapp.com",
-         projectId: "neumaticos-fv",
-         storageBucket: "neumaticos-fv.firebasestorage.app",
-         messagingSenderId: "50061965881",
-         appId: "1:50061965881:web:31c43abfeabc0c0ed8ebe8",
-         measurementId: "G-LZVB5CT01W"  
-      };
-
-      if (!firebaseConfig || firebaseConfig.apiKey === "AIzaSy...REEMPLAZAR") {
-        setUiState('error', 'Falta tu configuración de Firebase en el código.');
-        console.error("Debes rellenar el objeto 'firebaseConfig' en el archivo HTML para que la aplicación funcione.");
-        return;
-      }
       
       try {
         app = initializeApp(firebaseConfig);
@@ -131,17 +129,23 @@
 
     async function attemptInitialSignIn() {
       try {
-        // Para pruebas en GitHub, siempre usaremos inicio de sesión anónimo.
-        await signInAnonymously(auth);
+        if (initialAuthToken) {
+          await signInWithCustomToken(auth, initialAuthToken);
+        } else {
+          await signInAnonymously(auth);
+        }
       } catch (error) {
         console.error("Fallo el intento de inicio de sesión:", error.code, error.message);
         let friendlyMessage = "Error de autenticación desconocido.";
         switch (error.code) {
+          case 'auth/invalid-custom-token':
+            friendlyMessage = "Token de autenticación inválido o expirado.";
+            break;
           case 'auth/network-request-failed':
             friendlyMessage = "Falla de red. Revisa tu conexión.";
             break;
           case 'auth/operation-not-allowed':
-            friendlyMessage = "Habilita el inicio de sesión anónimo en Firebase.";
+            friendlyMessage = "Inicio de sesión anónimo no habilitado.";
             break;
         }
         setUiState('error', friendlyMessage);
@@ -257,6 +261,109 @@
         console.error("Error en el análisis con Gemini:", e);
         displayAppMessage('Error al conectar con la IA.', 'error');
       }
+    }
+
+    // === GENERACIÓN DE PDF ===
+    const logoBase64 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAoAAAAGQCAYAAAB0Jt0KAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAE34SURBVGJaT917fFTl+ff/bylVVZcvl0q5lEtVKS/lUlxU5VJRKS+VUgnk/pUQCf+kQBKQQDKQCQnJJBsm2WSSzSYk2SSbJGM2Y8/Yc2zP2LLHzvqcM8/sWWvP2mvvvbf23muvY/V6PX/8Z8/Zc44/n/f8/v487+953vM+7z/e8z5fV1X1+voN90d7f38n9vb2JmNjY93h4eH/JmRkZKQAAAAAAKSX3d3dEwIDA+M/A9/f35+RkZEBAAAAAMhLd3f3xMnJyT+p1Wo1Go3qVqs1Go3G5ORkfHp6upubm/t33t/fn5GRkQEAAAAAyEt3d/eEwMBAWFlZ+Z+0TqdTqVQuLi4ODg52d3Z2NjY2Jicnp6amGo1GZXd3t9Xq7u7uRkZGBgAAAACQ/3A+Pj4+PT0dFhaGXgU/AAAAAElFTkSuQmCC';
+
+    window.generatePdf = async function(recordId) {
+        displayAppMessage('Generando PDF, por favor espera...', 'info');
+
+        const record = window.currentRecords.find(r => r.id === recordId);
+        if (!record) {
+            displayAppMessage('Error: Registro no encontrado.', 'error');
+            return;
+        }
+
+        const { jsPDF } = window.jspdf;
+        const doc = new jsPDF();
+
+        // Cabecera del PDF
+        doc.addImage(logoBase64, 'PNG', 15, 10, 50, 16);
+        doc.setFontSize(22);
+        doc.setFont('helvetica', 'bold');
+        doc.text("Registro de Desgaste de Neumáticos", 195, 20, { align: 'right' });
+        doc.setLineWidth(0.5);
+        doc.line(15, 30, 195, 30);
+
+        // Datos generales
+        let yPos = 40;
+        doc.setFontSize(12);
+        doc.setFont('helvetica', 'bold');
+        doc.text("Información General", 15, yPos);
+        yPos += 8;
+        doc.setFont('helvetica', 'normal');
+        doc.text(`N° Orden: ${record.orderNumber}`, 15, yPos);
+        doc.text(`Fecha: ${new Date(record.date).toLocaleDateString('es-CL', {timeZone: 'UTC'})}`, 105, yPos);
+        yPos += 7;
+        doc.text(`Sucursal: ${record.branchName}`, 15, yPos);
+        doc.text(`Kilometraje: ${record.mileage.toLocaleString('es-CL')} km`, 105, yPos);
+        yPos += 7;
+        doc.text(`Tipo de Vehículo: ${record.vehicleType}`, 15, yPos);
+        yPos += 7;
+        doc.text(`Marca/Modelo General: ${record.generalMakeModel}`, 15, yPos);
+        yPos += 7;
+        doc.text(`Medida General: ${record.tireSize}`, 15, yPos);
+        yPos += 7;
+        if(record.generalComments) {
+            const splitComments = doc.splitTextToSize(`Comentarios: ${record.generalComments}`, 180);
+            doc.text(splitComments, 15, yPos);
+            yPos += (splitComments.length * 5);
+        }
+
+        // Tabla de neumáticos
+        const tireData = record.tires.map(t => [t.position, t.makeModel, t.surco1.toFixed(1), t.surco2.toFixed(1), t.surco3.toFixed(1)]);
+        doc.autoTable({
+            startY: yPos + 5,
+            head: [['Posición', 'Marca/Modelo', 'Surco 1 (mm)', 'Surco 2 (mm)', 'Surco 3 (mm)']],
+            body: tireData,
+            theme: 'grid',
+            headStyles: { fillColor: [5, 150, 105] }
+        });
+
+        yPos = doc.lastAutoTable.finalY + 15;
+
+        // Imágenes adjuntas
+        const imageTires = record.tires.filter(t => t.photoURL && t.photoURL !== 'N/A');
+        if (imageTires.length > 0) {
+            doc.setFontSize(14);
+            doc.setFont('helvetica', 'bold');
+            doc.text("Fotografías Adjuntas", 15, yPos);
+            yPos += 10;
+            doc.setFont('helvetica', 'normal');
+            
+            for (const tire of imageTires) {
+                if (yPos > 220) { // Margen para evitar corte de imagen
+                    doc.addPage();
+                    yPos = 20;
+                }
+                try {
+                    const response = await fetch(tire.photoURL);
+                    const blob = await response.blob();
+                    const imageBase64 = await new Promise((resolve, reject) => {
+                        const reader = new FileReader();
+                        reader.onloadend = () => resolve(reader.result);
+                        reader.onerror = reject;
+                        reader.readAsDataURL(blob);
+                    });
+
+                    doc.setFontSize(10);
+                    doc.text(`Posición: ${tire.position} (${tire.makeModel})`, 15, yPos);
+                    doc.addImage(imageBase64, 'JPEG', 15, yPos + 3, 80, 60);
+                    yPos += 70;
+
+                } catch (e) {
+                    console.error(`No se pudo cargar la imagen para ${tire.position}:`, e);
+                    if (yPos > 280) { doc.addPage(); yPos = 20; }
+                    doc.text(`- Imagen no disponible para la posición ${tire.position}.`, 15, yPos);
+                    yPos += 7;
+                }
+            }
+        }
+
+        // Guardar PDF
+        doc.save(`Registro_FlotaTRACK_${record.orderNumber}.pdf`);
+        displayAppMessage('✅ PDF generado con éxito.', 'success');
     }
     
     // === HELPERS Y UI ===
@@ -516,10 +623,18 @@
             <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${dateStr}</td>
             <td class="px-4 py-3 whitespace-nowrap text-sm ${criticalClass}">${isFinite(minSurco) ? minSurco.toFixed(1) : '-'} mm</td>
             <td class="px-4 py-3 whitespace-nowrap text-right text-sm font-medium">
-              <button onclick="window.analyzeRecord('${record.id}')" class="text-primary hover:text-secondary p-2 rounded-lg transition hover:bg-primary/10 flex items-center gap-2">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3c7.2 0 9 1.8 9 9s-1.8 9-9 9-9-1.8-9-9 1.8-9 9-9"/><path d="M12 15h.01"/><path d="M12 12V9"/></svg>
-                Analizar
-              </button>
+              <div class="flex items-center justify-end gap-2">
+                <button onclick="window.generatePdf('${record.id}')" class="text-red-600 hover:text-red-800 p-2 rounded-lg transition hover:bg-red-100" title="Generar PDF">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                    <path d="M14 14V4.5L9.5 0H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2zM9.5 1.5L14 6v8.5a.5.5 0 0 1-.5.5H4a.5.5 0 0 1-.5-.5v-12A.5.5 0 0 1 4 1.5h5.5z"/>
+                    <path d="M4.603 12.087a.81.81 0 0 1-.438.448l-.175.082a.558.558 0 0 1-.685-.28.52.52 0 0 1 .035-.634l.116-.117.175-.082a.81.81 0 0 1 .438-.448l.175-.082.685.28a.52.52 0 0 1-.035.634l-.116.117-.175.082zm1.833-1.422a.512.512 0 0 1-.028.682l-.206.206a.512.512 0 0 1-.682.028l-.206-.206a.512.512 0 0 1 .028-.682l.206-.206a.512.512 0 0 1 .682-.028l.206.206zm.208.64a.512.512 0 0 1-.028.682l-.206.206a.512.512 0 0 1-.682.028l-.206-.206a.512.512 0 0 1 .028-.682l.206-.206a.512.512 0 0 1 .682-.028l.206.206zm1.758-1.55a.512.512 0 0 1 .686.252l.206.411a.512.512 0 0 1-.252.686l-.411.206a.512.512 0 0 1-.686-.252l-.206-.411a.512.512 0 0 1 .252-.686l.411.206zm.686.645a.512.512 0 0 1 .252.686l-.206.411a.512.512 0 0 1-.686.252l-.411-.206a.512.512 0 0 1-.252-.686l.206-.411a.512.512 0 0 1 .686-.252l.411.206zM8.579 14.3a.512.512 0 0 1 .252.686l-.206.411a.512.512 0 0 1-.686.252l-.411-.206a.512.512 0 0 1-.252-.686l.206-.411a.512.512 0 0 1 .686-.252l.411.206zm2.814-2.97a.512.512 0 0 1 .686.252l.206.411a.512.512 0 0 1-.252.686l-.411.206a.512.512 0 0 1-.686-.252l-.206-.411a.512.512 0 0 1 .252-.686l.411.206zm.686.645a.512.512 0 0 1 .252.686l-.206.411a.512.512 0 0 1-.686.252l-.411-.206a.512.512 0 0 1-.252-.686l.206-.411a.512.512 0 0 1 .686-.252l.411.206zM11.803 14.3a.512.512 0 0 1 .252.686l-.206.411a.512.512 0 0 1-.686.252l-.411-.206a.512.512 0 0 1-.252-.686l.206-.411a.512.512 0 0 1 .686-.252l.411.206z"/>
+                  </svg>
+                </button>
+                <button onclick="window.analyzeRecord('${record.id}')" class="text-primary hover:text-secondary p-2 rounded-lg transition hover:bg-primary/10 flex items-center gap-2">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3c7.2 0 9 1.8 9 9s-1.8 9-9 9-9-1.8-9-9 1.8-9 9-9"/><path d="M12 15h.01"/><path d="M12 12V9"/></svg>
+                  Analizar
+                </button>
+              </div>
             </td>
           </tr>`;
       }).join('');
