@@ -37,9 +37,6 @@
     import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
     import { getFirestore, addDoc, onSnapshot, collection, query, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
     import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-storage.js";
-    import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-
-    setLogLevel('Debug'); // Para ver logs de Firebase en consola
 
     // === GEMINI ===
     const GEMINI_MODEL = "gemini-2.5-flash-preview-05-20";
@@ -56,7 +53,7 @@
     window.currentRecords = [];
 
     const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-    const firebaseConfig = typeof __firebase_config !== 'undefined' ? safeParse(__firebase_config) : null;
+    // Se usa una variable local para la configuración en lugar de una global
     const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
     const TIRES_STRUCTURE = {
@@ -83,6 +80,7 @@
       "Limpia neumáticos y llantas con regularidad.",
     ];
 
+    // Función para parsear JSON de forma segura (necesaria para la config de Firebase)
     function safeParse(jsonLike) { try { return JSON.parse(jsonLike); } catch { return null; } }
     
     // Función para habilitar/deshabilitar botones del formulario de registro
@@ -101,33 +99,51 @@
     async function initializeFirebase() {
       setFormButtonsDisabled(true); // Deshabilita botones al inicio
 
-      if (!firebaseConfig) { 
-        document.getElementById('userIdDisplay').textContent = `ERROR: Configuración de Firebase faltante.`;
-        return; 
-      }
-      app = initializeApp(firebaseConfig);
-      db = getFirestore(app); // Inicializa db temprano
-      storage = getStorage(app);
-      auth = getAuth(app);
-      try {
-        const idEl = document.getElementById('userIdDisplay');
-        
-        // 1. Intentar autenticación (o con token o anónima)
-        const authResult = await (initialAuthToken ? signInWithCustomToken(auth, initialAuthToken) : signInAnonymously(auth));
-        currentUserId = authResult.user.uid;
+      // Intenta obtener y parsear la configuración de Firebase
+        let firebaseConfig = null;
+        try {
+            // El entorno inyecta __firebase_config como string. Lo parseamos.
+            if (typeof __firebase_config !== 'undefined') {
+                firebaseConfig = safeParse(__firebase_config);
+            }
+        } catch (e) {
+            console.error("Error al parsear __firebase_config:", e);
+        }
 
-        // 2. Marcar como listo y mostrar ID 
-        authReady = true;
-        if(idEl) idEl.textContent = `ID Técnico: ${currentUserId.substring(0, 8)}...`;
-        setFormButtonsDisabled(false); // Habilita botones al finalizar la autenticación
+      if (!firebaseConfig) { 
+            // Muestra el mensaje de error directamente en la UI superior
+            document.getElementById('firebaseErrorDisplay').textContent = `ERROR: Configuración de Firebase faltante.`;
+            document.getElementById('userIdDisplay').textContent = `ERROR`;
+            return; 
+      }
+      
+      const idEl = document.getElementById('userIdDisplay');
+      
+      try {
+          // 1. Inicializar app, db y storage
+          app = initializeApp(firebaseConfig);
+          db = getFirestore(app); // Inicializa db
+          storage = getStorage(app);
+          auth = getAuth(app);
         
-        // 3. Cargar registros después de la autenticación
-        loadRecords();
+          // 2. Autenticación (o con token o anónima)
+          const authResult = await (initialAuthToken ? signInWithCustomToken(auth, initialAuthToken) : signInAnonymously(auth));
+          currentUserId = authResult.user.uid;
+
+          // 3. Marcar como listo y mostrar ID 
+          authReady = true;
+          if(idEl) idEl.textContent = `ID Técnico: ${currentUserId.substring(0, 8)}...`;
+          setFormButtonsDisabled(false); // Habilita botones al finalizar la autenticación
+        
+          // 4. Cargar registros después de la autenticación
+          loadRecords();
 
       } catch (e) {
         console.error("Error de inicialización de Firebase/Autenticación:", e);
         window.displayMessage('Error de inicialización. Revisa la consola para más detalles.','error');
-        document.getElementById('userIdDisplay').textContent = `ID Técnico: Falló la autenticación`;
+        // Si la autenticación falla, deshabilitar botones y mostrar error
+        setFormButtonsDisabled(true);
+        if(idEl) idEl.textContent = `ID Técnico: Falló la autenticación`;
       }
     }
 
@@ -313,7 +329,7 @@
       let reviewMessages = [];
 
       // ************************************************************
-      // ** CORRECCIÓN: Usar 'authReady' en lugar de sólo 'db' **
+      // ** Se mantiene la verificación con 'authReady' **
       // ************************************************************
       if (!authReady) { 
           reviewMessages.push(msg('error','Base de datos no lista. Espera a que el ID Técnico aparezca.')); 
@@ -556,6 +572,8 @@
                         <span class="text-primary">Flota</span> TRACK RRS
                     </h1>
                     <div class="flex items-center space-x-4">
+                        <!-- ID para mostrar el error de Firebase si ocurre (SOLUCION 1) -->
+                        <span id="firebaseErrorDisplay" class="text-sm font-medium text-red-600"></span> 
                         <!-- Muestra el ID de sesión generado por Firebase -->
                         <span id="userIdDisplay" class="text-sm font-medium text-gray-600">ID Técnico: Cargando...</span>
                     </div>
