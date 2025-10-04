@@ -1,601 +1,750 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Flota TRACK - Registro de Surcos</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Flota TRACK - Registro de Surcos</title>
 
-    <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          colors: {
-            primary: "#059669",
-            secondary: "#10b981",
-            accent: "#fbbf24",
-            background: "#f9fafb",
-          },
-          fontFamily: { sans: ["Inter", "sans-serif"] },
-        },
-      },
-    };
-  </script>
-  <style>
-    html, body { height: 100%; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
-    #app-container { min-height: 100vh; }
-    .tab-button { transition: all 0.2s; }
-    .tab-button.active { border-bottom: 4px solid #059669; font-weight: 600; color: #059669; }
-    .form-control { border-radius: 0.5rem; border: 1px solid #d1d5db; padding: 0.5rem 0.75rem; width: 100%; transition: all 0.15s; }
-    .form-control:focus { border-color: #059669; box-shadow: 0 0 0 3px rgba(5,150,105,0.5); outline: none; }
-  </style>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            primary: "#059669",
+            secondary: "#10b981",
+            accent: "#fbbf24",
+            background: "#f9fafb",
+          },
+          fontFamily: {
+            sans: ["Inter", "sans-serif"]
+          },
+        },
+      },
+    };
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    html, body { height: 100%; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
+    #app-container { min-height: 100vh; }
+    .tab-button { transition: all 0.2s; padding: 1rem 0.5rem; border-bottom: 4px solid transparent; }
+    .tab-button.active { border-bottom-color: #059669; font-weight: 600; color: #059669; }
+    .form-control { border-radius: 0.5rem; border: 1px solid #d1d5db; padding: 0.5rem 0.75rem; width: 100%; transition: all 0.15s; }
+    .form-control:focus { border-color: #059669; box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.2); outline: none; }
+  </style>
 
-    <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-    import { getAuth, onAuthStateChanged, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-    import { getFirestore, addDoc, onSnapshot, collection, query, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-    import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-storage.js";
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { getAuth, onAuthStateChanged, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+    import { getFirestore, addDoc, onSnapshot, collection, query, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+    import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-storage.js";
 
-    // === GEMINI ===
-    const GEMINI_MODEL = "gemini-2.5-flash-preview-05-20";
-    const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/" + GEMINI_MODEL + ":generateContent";
-    const apiKey = typeof __gemini_key !== 'undefined' ? __gemini_key : ""; // inyecta tu key en runtime o via proxy
+    // === CONFIGURACIÓN ===
+    const GEMINI_MODEL = "gemini-2.5-flash-preview-05-20";
+    const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+    const apiKey = typeof __gemini_key !== 'undefined' ? __gemini_key : "";
+    const BRANCHES = ["Copiapó", "Vallenar", "Santiago", "Viña del Mar", "Casa Matriz"];
+    const TIRES_STRUCTURE = {
+      'Bus': ['I1', 'D1', 'I2', 'D2', 'I3', 'D3', 'Repuesto'],
+      'Taxibus': ['I1', 'D1', 'I2', 'D2', 'I3', 'D3', 'Repuesto'],
+      'Minibús': ['I1', 'D1', 'I2', 'D2', 'Repuesto'],
+      'Minibús DR (Doble Rodado)': ['I1', 'D1', 'I2', 'D2', 'I3', 'D3', 'Repuesto'],
+      'Camioneta': ['I1', 'D1', 'I2', 'D2', 'Repuesto'],
+    };
+    const PREDEFINED_MODELS = [
+      'Michelin X Multiway 3D XZE', 'Pirelli FH:01 Energy', 'Bridgestone R260', 'Dunlop SP338', 'Goodyear KMAX S', 'Continental HT3', 'Hankook SmartFlex AH31', 'Westlake CB867', 'Sailun S701'
+    ];
+    const PREDEFINED_SIZES = ['225/75R16', '245/70R19.5', '275/80R22.5', '295/80R22.5', '315/80R22.5', '11R22.5', '12R22.5', '10.00R20'];
+    const longevityTips = [
+      "Mantén la <strong>presión correcta</strong> semanalmente. La subinflación es el principal asesino de neumáticos.",
+      "Realiza la <strong>rotación</strong> cada 10–12 mil km para asegurar un desgaste uniforme.",
+      "Alinea si notas desgaste irregular o tras golpes fuertes.",
+      "Balancea al montar o tras reparaciones para evitar vibraciones.",
+      "Inspecciona cortes, protuberancias y objetos incrustados.",
+      "Conduce suave: evita frenazos y acelerones.",
+      "Revisa suspensión/amortiguadores: influyen en el desgaste.",
+      "Limpia neumáticos y llantas con regularidad.",
+    ];
 
-    // === CONSTANTES GENERALES ===
-    const BRANCHES = ["Copiapó","Vallenar","Santiago","Viña del Mar","Casa Matriz"];
+    // === ESTADO GLOBAL DE LA APLICACIÓN ===
+    let app = null, db = null, auth = null, storage = null;
+    let currentUserId = null;
+    let authReady = false;
+    let unsubscribeRecords = null;
+    window.currentRecords = [];
+    window.pendingReviewData = null;
 
-    // === GLOBALS ===
-    let app = null, db = null, auth = null, storage = null;
-    let currentUserId = null; // UID de Firebase
-    let authReady = false; // Estado para asegurar que Firebase terminó de autenticar
-    window.currentRecords = [];
+    const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+    const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
-    const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-    const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+    // === INICIALIZACIÓN (CÓDIGO CORREGIDO Y MEJORADO) ===
+    async function initializeAppCore() {
+      setUiState('loading');
 
-    const TIRES_STRUCTURE = {
-      'Bus': ['I1','D1','I2','D2','I3','D3','Repuesto'],
-      'Taxibus': ['I1','D1','I2','D2','I3','D3','Repuesto'],
-      'Minibús': ['I1','D1','I2','D2','Repuesto'],
-      'Minibús DR (Doble Rodado)': ['I1','D1','I2','D2','I3','D3','Repuesto'],
-      'Camioneta': ['I1','D1','I2','D2','Repuesto'],
-    };
+      // 1. Validar la existencia de la configuración de Firebase.
+      if (typeof __firebase_config === 'undefined' || !__firebase_config) {
+        setUiState('error', 'Configuración de Firebase no encontrada.');
+        console.error("La variable global __firebase_config no está definida o está vacía.");
+        return;
+      }
 
-    const PREDEFINED_MODELS = [
-      'Michelin X Multiway 3D XZE','Pirelli FH:01 Energy','Bridgestone R260','Dunlop SP338','Goodyear KMAX S','Continental HT3','Hankook SmartFlex AH31','Westlake CB867','Sailun S701'
-    ];
-    const PREDEFINED_SIZES = ['225/75R16','245/70R19.5','275/80R22.5','295/80R22.5','315/80R22.5','11R22.5','12R22.5','10.00R20'];
+      // 2. Intentar parsear la configuración.
+      let firebaseConfig;
+      try {
+        firebaseConfig = JSON.parse(__firebase_config);
+      } catch (e) {
+        setUiState('error', 'Error al parsear la configuración de Firebase.');
+        console.error("Error al parsear __firebase_config:", e);
+        return;
+      }
+      
+      // 3. Inicializar los servicios de Firebase.
+      try {
+        app = initializeApp(firebaseConfig);
+        db = getFirestore(app);
+        storage = getStorage(app);
+        auth = getAuth(app);
 
-    const longevityTips = [
-      "Mantén la **presión correcta** semanalmente. La subinflación es el principal asesino de neumáticos.",
-      "Realiza la **rotación** cada 10–12 mil km para asegurar un desgaste uniforme.",
-      "Alinea si notas desgaste irregular o tras golpes fuertes.",
-      "Balancea al montar o tras reparaciones para evitar vibraciones.",
-      "Inspecciona cortes, protuberancias y objetos incrustados.",
-      "Conduce suave: evita frenazos y acelerones.",
-      "Revisa suspensión/amortiguadores: influyen en el desgaste.",
-      "Limpia neumáticos y llantas con regularidad.",
-    ];
-
-    function safeParse(jsonLike) { try { return JSON.parse(jsonLike); } catch { return null; } }
-    
-    function setFormButtonsDisabled(disabled) {
-      const reviewBtn = document.getElementById('reviewButton');
-      const saveBtn = document.getElementById('saveButton');
-      if (reviewBtn) reviewBtn.disabled = disabled;
-      if (saveBtn) saveBtn.disabled = disabled;
-      if (!disabled && document.getElementById('vehicleType')?.value) {
-        if (reviewBtn) reviewBtn.disabled = false;
-      }
-    }
-
-    // === INICIO CÓDIGO MEJORADO ===
-    async function initializeFirebase() {
-      setFormButtonsDisabled(true);
-      const idEl = document.getElementById('userIdDisplay');
-      const errorEl = document.getElementById('firebaseErrorDisplay');
-
-      // 1. PARSEO DE CONFIGURACIÓN
-      let firebaseConfig = null;
-      try {
-        if (typeof __firebase_config !== 'undefined') {
-            firebaseConfig = safeParse(__firebase_config);
-        }
-      } catch (e) {
-          console.error("Error al parsear __firebase_config:", e);
-      }
-
-      if (!firebaseConfig) { 
-          errorEl.textContent = `ERROR: Configuración de Firebase inválida o faltante.`;
-          idEl.textContent = `ID Técnico: Desconectado`;
-          return; 
-      }
-      
-      try {
-          // 2. INICIALIZACIÓN DE SERVICIOS
-          app = initializeApp(firebaseConfig);
-          db = getFirestore(app);
-          storage = getStorage(app);
-          auth = getAuth(app);
-
-        // 3. GESTIÓN DE ESTADO DE AUTENTICACIÓN (LA MEJORA PRINCIPAL)
+        // 4. Gestionar el estado de autenticación.
         onAuthStateChanged(auth, user => {
-            if (user) {
-                // --- ESTADO: AUTENTICADO ---
-                currentUserId = user.uid;
-                authReady = true;
-                errorEl.textContent = '';
-                idEl.textContent = `ID Técnico: ${currentUserId.substring(0, 8)}...`;
-                setFormButtonsDisabled(false);
-                
-                if (window.currentRecords.length === 0) {
-                   loadRecords();
-                }
-
-            } else {
-                // --- ESTADO: DESCONECTADO ---
-                currentUserId = null;
-                authReady = false;
-                idEl.textContent = `ID Técnico: No autenticado`;
-                setFormButtonsDisabled(true);
+          if (user) {
+            currentUserId = user.uid;
+            authReady = true;
+            setUiState('authenticated', `ID: ${currentUserId.substring(0, 8)}...`);
+            if (window.currentRecords.length === 0) {
+              loadRecords();
             }
+          } else {
+            currentUserId = null;
+            authReady = false;
+            setUiState('unauthenticated');
+          }
         });
 
-        // 4. INTENTO DE INICIO DE SESIÓN INICIAL
+        // 5. Intentar el inicio de sesión inicial.
         await attemptInitialSignIn();
 
-      } catch (e) {
-        console.error("Error crítico de inicialización de Firebase:", e);
-        errorEl.textContent = "Error grave de Firebase. No se puede iniciar la app.";
-        idEl.textContent = `ID Técnico: Fallo Crítico`;
-        setFormButtonsDisabled(true);
-      }
-    }
+      } catch (e) {
+        setUiState('error', 'Error crítico al iniciar Firebase.');
+        console.error("Error crítico de inicialización de Firebase:", e);
+      }
+    }
 
     async function attemptInitialSignIn() {
-        const errorEl = document.getElementById('firebaseErrorDisplay');
-        try {
-            if (initialAuthToken) {
-                await signInWithCustomToken(auth, initialAuthToken);
-            } else {
-                await signInAnonymously(auth);
-            }
-        } catch (error) {
-            console.error("Fallo el intento de inicio de sesión:", error.code, error.message);
-            switch (error.code) {
-                case 'auth/invalid-custom-token':
-                    errorEl.textContent = "Error: El token de autenticación es inválido o ha expirado.";
-                    break;
-                case 'auth/network-request-failed':
-                    errorEl.textContent = "Error: Falla de red. Revisa tu conexión a internet.";
-                    break;
-                case 'auth/operation-not-allowed':
-                    errorEl.textContent = "Error: El inicio de sesión anónimo no está habilitado en Firebase.";
-                    break;
-                default:
-                    errorEl.textContent = "Error de autenticación desconocido.";
-                    break;
-            }
+      try {
+        if (initialAuthToken) {
+          await signInWithCustomToken(auth, initialAuthToken);
+        } else {
+          await signInAnonymously(auth);
         }
+      } catch (error) {
+        console.error("Fallo el intento de inicio de sesión:", error.code, error.message);
+        let friendlyMessage = "Error de autenticación desconocido.";
+        switch (error.code) {
+          case 'auth/invalid-custom-token':
+            friendlyMessage = "Token de autenticación inválido o expirado.";
+            break;
+          case 'auth/network-request-failed':
+            friendlyMessage = "Falla de red. Revisa tu conexión.";
+            break;
+          case 'auth/operation-not-allowed':
+            friendlyMessage = "Inicio de sesión anónimo no habilitado.";
+            break;
+        }
+        setUiState('error', friendlyMessage);
+      }
     }
-    // === FIN CÓDIGO MEJORADO ===
+    
+    // === GESTIÓN DE DATOS (FIRESTORE) ===
+    function loadRecords() {
+      if (!db || !authReady) return;
+      if (typeof unsubscribeRecords === 'function') {
+        unsubscribeRecords();
+      }
+      const recordsRef = collection(db, `/artifacts/${appId}/public/data/tire_records`);
+      const q = query(recordsRef);
 
-    let unsubscribe = null;
-    function loadRecords() {
-      if (!db || !authReady) return;
-      if (typeof unsubscribe === 'function') { unsubscribe(); }
-      const recordsRef = collection(db, `/artifacts/${appId}/public/data/tire_records`);
-      const q = query(recordsRef);
+      unsubscribeRecords = onSnapshot(q, (snapshot) => {
+        const records = [];
+        snapshot.forEach((doc) => records.push({ id: doc.id, ...doc.data() }));
+        window.currentRecords = records.sort((a, b) => (b.orderNumber || 0) - (a.orderNumber || 0));
+        displayRecords(window.currentRecords);
+      }, (err) => console.error("Error en onSnapshot:", err));
+    }
 
-      unsubscribe = onSnapshot(q, (snapshot) => {
-        const records = [];
-        snapshot.forEach((doc) => records.push({ id: doc.id, ...doc.data() }));
-        window.currentRecords = records.sort((a,b) => (b.orderNumber||0) - (a.orderNumber||0));
-        displayRecords(window.currentRecords);
-      }, (err)=> console.error("onSnapshot error:", err));
-    }
+    async function uploadPhoto(file, position) {
+      if (!storage || !currentUserId) throw new Error("Storage o usuario no disponibles");
+      const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
+      const fileName = `${currentUserId}_${position}_${Date.now()}.${ext}`;
+      const storageRef = ref(storage, `tire_photos/${currentUserId}/${fileName}`);
+      await uploadBytes(storageRef, file);
+      return getDownloadURL(storageRef);
+    }
+    
+    // === LÓGICA DE LA APLICACIÓN ===
+    window.handleSave = async function() {
+      if (!authReady || !window.pendingReviewData) {
+        return displayAppMessage(authReady ? 'Evalúa antes de guardar' : 'Error de autenticación.', 'error');
+      }
 
-    async function uploadPhoto(file, position) {
-      if (!storage || !currentUserId) throw new Error("Storage o usuario no disponibles");
-      const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
-      const fileName = `${currentUserId}_${position}_${Date.now()}.${ext}`;
-      const storageRef = ref(storage, `tire_photos/${currentUserId}/${fileName}`);
-      await uploadBytes(storageRef, file);
-      return getDownloadURL(storageRef);
-    }
+      const data = window.pendingReviewData;
+      const saveBtn = document.getElementById('saveButton');
+      saveBtn.disabled = true;
+      saveBtn.innerHTML = getLoaderSvg('Guardando...');
 
-    // === IA (Gemini) ===
-    window.analyzeRecord = async function(recordId) {
-      if (!db || !authReady) { window.displayMessage('Error: Base de datos no inicializada.','error'); return; }
-      
-      const record = window.currentRecords.find(r => r.id === recordId);
-      if (!record) { window.displayMessage('Registro no encontrado','error'); return; }
-      
-      window.displayMessage('Iniciando análisis experto para Orden N° ' + record.orderNumber + '...','info');
+      try {
+        const uploadedPhotos = await Promise.all((data.photoFiles || []).map(async item => ({
+          position: item.position,
+          url: await uploadPhoto(item.file, item.position)
+        })));
+        
+        data.tires = data.tires.map(tire => {
+          const foundPhoto = uploadedPhotos.find(p => p.position === tire.position);
+          return { ...tire, photoURL: foundPhoto ? foundPhoto.url : 'N/A' };
+        });
 
-      const recordDetails = formatRecordForPrompt(record);
-      const systemPrompt = "Actúa como ingeniero de mantenimiento de flotas y experto en neumáticos. Analiza el informe de surcos. Indica neumáticos críticos (<3mm) y sugiere plan de acción (rotación, reemplazo, alineación, presión). Usa fuentes web cuando sea útil y lista citas.";
-      const userQuery = "Orden N° " + record.orderNumber + " | " + record.mileage + " km\n\n" + recordDetails;
+        const { photoFiles, ...finalRecord } = { ...data, timestamp: serverTimestamp() };
+        const recordsRef = collection(db, `/artifacts/${appId}/public/data/tire_records`);
+        await addDoc(recordsRef, finalRecord);
 
-      const payload = { contents: [{ parts: [{ text: userQuery }] }], systemInstruction: { parts: [{ text: systemPrompt }] }, tools: [{ google_search: {} }] };
+        displayAppMessage('✅ Registro guardado con éxito', 'success');
+        resetRegistrationForm();
+        window.switchTab('records');
 
-      const MAX_RETRIES = 3;
-      for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-        try {
-          const res = await fetch(GEMINI_API_URL + "?key=" + apiKey, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-          if (!res.ok) {
-            if (attempt === MAX_RETRIES - 1) throw new Error("Gemini HTTP " + res.status);
-            const delay = Math.pow(2, attempt) * 1000;
-            await new Promise(resolve => setTimeout(resolve, delay));
-            continue;
-          }
+      } catch (e) {
+        console.error('Error al guardar:', e);
+        displayAppMessage(`❌ Error al guardar: ${e.message}`, 'error');
+      } finally {
+        saveBtn.disabled = true;
+        saveBtn.innerHTML = 'Guardar Registro';
+      }
+    }
+    
+    // === LÓGICA DE IA (GEMINI) ===
+    window.analyzeRecord = async function(recordId) {
+      if (!authReady) return displayAppMessage('Error: Base de datos no inicializada.', 'error');
+      
+      const record = window.currentRecords.find(r => r.id === recordId);
+      if (!record) return displayAppMessage('Registro no encontrado', 'error');
+      
+      displayAppMessage(`Iniciando análisis para Orden N° ${record.orderNumber}...`, 'info');
 
-          const result = await res.json();
-          const candidate = result?.candidates?.[0];
-          
-          const text = candidate?.content?.parts?.[0]?.text || 'No se pudo generar un análisis.';
-          const sources = (candidate?.groundingMetadata?.groundingAttributions || []).map(a => ({ uri: a?.web?.uri, title: a?.web?.title })).filter(s => s.uri && s.title);
-          
-          window.displayMessage('✅ Análisis de Orden N° ' + record.orderNumber + ' generado. Revisa la consola para el informe completo.','success');
-          console.log("--- Análisis Gemini Orden N° " + record.orderNumber + " ---");
-          console.log(text);
-          if(sources.length) {
-              console.log("\nFuentes:");
-              sources.forEach(s => console.log(`- ${s.title}: ${s.uri}`));
-          }
-          console.log("-----------------------------------------------------");
+      const recordDetails = formatRecordForPrompt(record);
+      const systemPrompt = "Actúa como ingeniero de mantenimiento de flotas y experto en neumáticos. Analiza el informe de surcos. Indica neumáticos críticos (<3mm) y sugiere un plan de acción conciso y priorizado (rotación, reemplazo, alineación, presión). Usa fuentes web si es útil y lista las citas.";
+      const userQuery = `Análisis de la Orden N° ${record.orderNumber} con ${record.mileage} km:\n\n${recordDetails}`;
+      const payload = {
+        contents: [{ parts: [{ text: userQuery }] }],
+        systemInstruction: { parts: [{ text: systemPrompt }] },
+        tools: [{ "google_search": {} }]
+      };
 
-          return;
-        } catch (e) {
-          if (attempt === MAX_RETRIES - 1) {
-            console.error(e);
-            window.displayMessage('Error al conectar con la IA o límite de reintentos alcanzado.','error');
-            return;
-          }
-          const delay = Math.pow(2, attempt) * 1000;
-          await new Promise(resolve => setTimeout(resolve, delay));
-        }
-      }
-    }
+      try {
+        const res = await fetch(`${GEMINI_API_URL}?key=${apiKey}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        if (!res.ok) throw new Error(`Gemini API request failed with status ${res.status}`);
 
-    function formatRecordForPrompt(record) {
-      let detail = "Sucursal: " + (record.branchName || "N/A") + "\n";
-      detail += "Tipo de Vehículo: " + record.vehicleType + "\n";
-      detail += "Medida General: " + (record.tireSize || 'N/A') + "\n";
-      detail += "Marca/Modelo General: " + record.generalMakeModel + "\n";
-      detail += "Comentarios del Técnico: \"" + (record.generalComments || 'Ninguno') + "\"\n\n";
-      detail += "Estado de los Neumáticos:\n";
-      (record.tires||[]).forEach(t => {
-        const minSurco = Math.min(t.surco1, t.surco2, t.surco3);
-        const maxSurco = Math.max(t.surco1, t.surco2, t.surco3);
-        const diff = maxSurco - minSurco;
-        detail += "- " + t.position + " (" + t.makeModel + "): " + t.surco1 + "/" + t.surco2 + "/" + t.surco3 + " mm. Mín: " + minSurco.toFixed(1) + ". Δ: " + diff.toFixed(1) + " mm.\n";
-      });
-      detail += "\nLímite legal flota: 3.0 mm.";
-      return detail;
-    }
+        const result = await res.json();
+        const candidate = result?.candidates?.[0];
+        const text = candidate?.content?.parts?.[0]?.text || 'No se pudo generar un análisis.';
+        const sources = (candidate?.groundingMetadata?.groundingAttributions || []).map(a => ({ uri: a?.web?.uri, title: a?.web?.title })).filter(s => s.uri && s.title);
+        
+        displayAppMessage(`✅ Análisis de Orden N° ${record.orderNumber} generado.`, 'success');
+        console.log(`--- Análisis Gemini Orden N° ${record.orderNumber} ---`);
+        console.log(text);
+        if (sources.length) {
+          console.log("\nFuentes:");
+          sources.forEach(s => console.log(`- ${s.title}: ${s.uri}`));
+        }
+        console.log("-----------------------------------------------------");
 
-    // === UI Helpers ===
-    window.switchTab = function(tabName) {
-      ['guide','register','records'].forEach(tab => {
-        const btn = document.getElementById("tab-button-" + tab);
-        const content = document.getElementById("tab-content-" + tab);
-        if (btn) btn.classList.toggle('active', tab === tabName);
-        if (content) content.classList.toggle('hidden', tab !== tabName);
-      });
-      if (tabName === 'guide') updateRandomRecommendation();
-      if (tabName === 'register') {
-        document.getElementById('reviewFeedback').innerHTML = '';
-        document.getElementById('saveButton').disabled = true;
-        document.getElementById('registrationForm').reset();
-        document.getElementById('tireInputsContainer').innerHTML = '';
-        const dateEl = document.getElementById('date');
-        if (dateEl) dateEl.value = new Date().toISOString().slice(0,10);
-        setFormButtonsDisabled(!authReady);
-      }
-    }
+      } catch (e) {
+        console.error("Error en el análisis con Gemini:", e);
+        displayAppMessage('Error al conectar con la IA.', 'error');
+      }
+    }
+    
+    // === HELPERS Y UI ===
+    function setUiState(state, message = '') {
+      const errorEl = document.getElementById('firebaseErrorDisplay');
+      const idEl = document.getElementById('userIdDisplay');
+      const formButtons = ['reviewButton', 'saveButton'];
+      
+      errorEl.textContent = '';
+      idEl.textContent = '';
+      let disableButtons = true;
 
-    window.generateTireInputs = function() {
-      const vehicleType = document.getElementById('vehicleType').value;
-      const container = document.getElementById('tireInputsContainer');
-      container.innerHTML = '';
-      const positions = TIRES_STRUCTURE[vehicleType] || [];
+      switch(state) {
+        case 'loading':
+          idEl.textContent = 'Conectando...';
+          break;
+        case 'authenticated':
+          idEl.textContent = message;
+          disableButtons = false;
+          break;
+        case 'unauthenticated':
+          idEl.textContent = 'No autenticado';
+          break;
+        case 'error':
+          errorEl.textContent = message;
+          idEl.textContent = 'Desconectado';
+          break;
+      }
+      
+      formButtons.forEach(id => {
+          const btn = document.getElementById(id);
+          if(btn) btn.disabled = disableButtons;
+      });
+      // La revisión solo se activa si hay un tipo de vehículo seleccionado
+      if(state === 'authenticated' && document.getElementById('vehicleType')?.value) {
+          document.getElementById('reviewButton').disabled = false;
+      }
+    }
 
-      positions.forEach((position, index) => {
-        const positionDesc = getPositionDescription(position);
-        const block = '<div class="p-4 border border-gray-200 rounded-xl shadow-sm mb-4 bg-white">' +
-          '<h4 class="text-lg font-semibold text-primary mb-3">Neumático - Posición ' + (index + 1) + ' (' + position + ')</h4>' +
-          '<p class="text-sm text-gray-500 mb-4">' + positionDesc + '</p>' +
-          '<div class="mb-4">' +
-            '<label class="block text-xs font-medium text-gray-700 mb-1" for="tireMakeModel-' + index + '">Marca y Modelo (Específico)</label>' +
-            '<select id="tireMakeModel-' + index + '" name="tireMakeModel_' + position + '" class="form-control text-sm">' +
-              '<option value="" selected>Usar marca general del formulario principal</option>' +
-              PREDEFINED_MODELS.map(m => '<option value="' + m + '">' + m + '</option>').join('') +
-            '</select>' +
-          '</div>' +
-          '<div class="grid grid-cols-3 gap-2 mb-4">' +
-            [1,2,3].map(i =>
-              '<div>' +
-                '<label class="block text-xs font-medium text-gray-700 mb-1" for="surco-' + index + '-' + i + '">Surco ' + i + ' (mm)</label>' +
-                '<input type="number" id="surco-' + index + '-' + i + '" name="surco_' + position + '_' + i + '" min="0" max="25" step="0.1" class="form-control text-sm" placeholder="Ej: 5.5" required />' +
-              '</div>').join('') +
-          '</div>' +
-          '<div>' +
-            '<label class="block text-xs font-medium text-gray-700 mb-1" for="photo-' + index + '">Foto (menor surco – opcional)</label>' +
-            '<input type="file" id="photo-' + index + '" name="photo_' + position + '" accept="image/jpeg,image/png" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-secondary/10 file:text-secondary hover:file:bg-secondary/20" />' +
-            '<p class="text-xs text-gray-400 mt-1">Se guarda en Firebase Storage.</p>' +
-          '</div>' +
-        '</div>';
-        container.insertAdjacentHTML('beforeend', block);
-      });
-      document.getElementById('reviewButton').disabled = positions.length === 0 || !authReady;
-    }
+    window.switchTab = function(tabName) {
+      ['guide', 'register', 'records'].forEach(tab => {
+        document.getElementById(`tab-button-${tab}`)?.classList.toggle('active', tab === tabName);
+        document.getElementById(`tab-content-${tab}`)?.classList.toggle('hidden', tab !== tabName);
+      });
+      if (tabName === 'guide') updateRandomRecommendation();
+      if (tabName === 'register') resetRegistrationForm();
+    }
 
-    function getPositionDescription(pos) {
-      switch(pos){
-        case 'I1': return 'Eje 1 - Delantera Izquierda (Conductor)';
-        case 'D1': return 'Eje 1 - Delantera Derecha';
-        case 'I2': return 'Eje 2 - Trasera Izquierda';
-        case 'D2': return 'Eje 2 - Trasera Derecha';
-        case 'I3': return 'Eje 2 (Interior) - Izquierda (Doble Rodado)';
-        case 'D3': return 'Eje 2 (Interior) - Derecha (Doble Rodado)';
-        case 'Repuesto': return 'Rueda de Repuesto';
-        default: return pos;
-      }
-    }
+    function resetRegistrationForm() {
+      const form = document.getElementById('registrationForm');
+      if (form) form.reset();
+      document.getElementById('tireInputsContainer').innerHTML = '';
+      document.getElementById('reviewFeedback').innerHTML = '';
+      const saveBtn = document.getElementById('saveButton');
+      if (saveBtn) saveBtn.disabled = true;
+      const reviewBtn = document.getElementById('reviewButton');
+      if (reviewBtn) reviewBtn.disabled = true;
+      const dateEl = document.getElementById('date');
+      if (dateEl) dateEl.value = new Date().toISOString().slice(0, 10);
+    }
 
-    window.handleReview = function(event){
-      event.preventDefault();
-      const form = document.getElementById('registrationForm');
-      const btn = document.getElementById('reviewButton');
-      const saveBtn = document.getElementById('saveButton');
-      const reviewContainer = document.getElementById('reviewFeedback');
-      let reviewMessages = [];
+    window.generateTireInputs = function() {
+      const vehicleType = document.getElementById('vehicleType').value;
+      const container = document.getElementById('tireInputsContainer');
+      container.innerHTML = '';
+      const positions = TIRES_STRUCTURE[vehicleType] || [];
 
-      if (!authReady) { 
-          reviewMessages.push(msg('error','Base de datos no lista. Espera a que el ID Técnico aparezca.')); 
-          finishReview(btn); 
-          return displayReview(reviewMessages); 
-      }
+      positions.forEach((position, index) => {
+        const positionDesc = getPositionDescription(position);
+        const block = `
+          <div class="p-4 border border-gray-200 rounded-xl shadow-sm mb-4 bg-white">
+            <h4 class="text-lg font-semibold text-primary mb-2">Neumático - Posición ${index + 1} (${position})</h4>
+            <p class="text-sm text-gray-500 mb-4">${positionDesc}</p>
+            <div class="mb-4">
+              <label class="block text-xs font-medium text-gray-700 mb-1" for="tireMakeModel-${index}">Marca y Modelo (Específico)</label>
+              <select id="tireMakeModel-${index}" name="tireMakeModel_${position}" class="form-control text-sm">
+                <option value="" selected>Usar marca general del formulario</option>
+                ${PREDEFINED_MODELS.map(m => `<option value="${m}">${m}</option>`).join('')}
+              </select>
+            </div>
+            <div class="grid grid-cols-3 gap-2 mb-4">
+              ${[1, 2, 3].map(i => `
+                <div>
+                  <label class="block text-xs font-medium text-gray-700 mb-1" for="surco-${index}-${i}">Surco ${i} (mm)</label>
+                  <input type="number" id="surco-${index}-${i}" name="surco_${position}_${i}" min="0" max="25" step="0.1" class="form-control text-sm" placeholder="Ej: 5.5" required />
+                </div>`).join('')}
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-gray-700 mb-1" for="photo-${index}">Foto (opcional)</label>
+              <input type="file" id="photo-${index}" name="photo_${position}" accept="image/jpeg,image/png" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-secondary/10 file:text-secondary hover:file:bg-secondary/20" />
+            </div>
+          </div>`;
+        container.insertAdjacentHTML('beforeend', block);
+      });
+      document.getElementById('reviewButton').disabled = positions.length === 0 || !authReady;
+    }
 
-      btn.disabled = true; btn.innerHTML = loaderSvg("Evaluando...");
-      saveBtn.disabled = true; reviewContainer.innerHTML = ''; window.pendingReviewData = null;
-      
-      const vehicleType = form.vehicleType.value;
-      const generalMakeModel = form.makeModel.value;
-      const branchName = form.branchName.value;
-      const orderNumber = parseInt(form.orderNumber.value);
-      const mileage = parseInt(form.mileage.value);
-      const dateVal = form.date.value;
-      const tireSize = form.tireSize.value;
-      const generalComments = form.generalComments.value || '';
+    window.handleReview = function(event) {
+        event.preventDefault();
+        const form = document.getElementById('registrationForm');
+        const reviewBtn = document.getElementById('reviewButton');
+        const saveBtn = document.getElementById('saveButton');
+        
+        if (!authReady) {
+            displayReview([{type: 'error', text: 'Base de datos no lista. Espera la autenticación.'}]);
+            return;
+        }
 
-      if (isNaN(orderNumber) || isNaN(mileage) || !dateVal || !generalMakeModel || !tireSize || !branchName) {
-        reviewMessages.push(msg('error','Completa Sucursal, Nro de orden, Kilometraje, Fecha, Medida y Marca/Modelo general.'));
-        finishReview(btn); return displayReview(reviewMessages);
-      }
+        reviewBtn.disabled = true;
+        reviewBtn.innerHTML = getLoaderSvg("Evaluando...");
+        saveBtn.disabled = true;
+        window.pendingReviewData = null;
 
-      const data = { 
-        orderNumber, mileage, date: dateVal, tireSize, vehicleType, 
-        generalMakeModel, generalComments, technicianId: currentUserId, branchName, tires: [], photoFiles: [] 
-      };
-      
-      const positions = TIRES_STRUCTURE[vehicleType] || [];
-      let dataError = false;
+        const formData = new FormData(form);
+        const generalData = Object.fromEntries(formData.entries());
 
-      positions.forEach(position => {
-        const s1 = parseFloat(form["surco_" + position + "_1"]?.value);
-        const s2 = parseFloat(form["surco_" + position + "_2"]?.value);
-        const s3 = parseFloat(form["surco_" + position + "_3"]?.value);
-        const tireMakeModel = form["tireMakeModel_" + position]?.value || generalMakeModel;
-        const photoInput = form["photo_" + position];
-        const photoFile = (photoInput && photoInput.files.length) ? photoInput.files[0] : null;
+        const requiredFields = ['branchName', 'orderNumber', 'mileage', 'date', 'tireSize', 'makeModel'];
+        if (requiredFields.some(field => !generalData[field])) {
+            displayReview([{type: 'error', text: 'Completa todos los campos generales (Sucursal, Orden, KM, Fecha, etc.).'}]);
+            finishReview(reviewBtn);
+            return;
+        }
 
-        if ([s1,s2,s3].some(v => Number.isNaN(v))) { reviewMessages.push(msg('error', 'Error en ' + position + ': surcos incompletos/invalidos.')); dataError = true; return; }
-        if ([s1,s2,s3].some(v => v < 0 || v > 25)) { reviewMessages.push(msg('error', 'Error en ' + position + ': surco fuera de rango (0–25 mm).')); dataError = true; return; }
+        const data = {
+            orderNumber: parseInt(generalData.orderNumber),
+            mileage: parseInt(generalData.mileage),
+            date: generalData.date,
+            tireSize: generalData.tireSize,
+            vehicleType: generalData.vehicleType,
+            generalMakeModel: generalData.makeModel,
+            generalComments: generalData.generalComments || '',
+            technicianId: currentUserId,
+            branchName: generalData.branchName,
+            tires: [],
+            photoFiles: []
+        };
 
-        const surcos = [s1,s2,s3];
-        const minSurco = Math.min(...surcos); const maxSurco = Math.max(...surcos); const diff = maxSurco - minSurco;
+        const positions = TIRES_STRUCTURE[data.vehicleType] || [];
+        let dataError = false;
+        let reviewMessages = [];
 
-        data.tires.push({ position, makeModel: tireMakeModel, surco1: s1, surco2: s2, surco3: s3, photoURL: 'N/A' });
-        if (photoFile) data.photoFiles.push({ file: photoFile, position });
+        positions.forEach(position => {
+            if (dataError) return;
+            const s1 = parseFloat(form[`surco_${position}_1`]?.value);
+            const s2 = parseFloat(form[`surco_${position}_2`]?.value);
+            const s3 = parseFloat(form[`surco_${position}_3`]?.value);
+            const makeModel = form[`tireMakeModel_${position}`]?.value || data.generalMakeModel;
+            const photoFile = form[`photo_${position}`]?.files[0] || null;
 
-        if (minSurco < 3.0) reviewMessages.push(msg('alert', "⚠️ " + position + " (" + tireMakeModel + ") min " + minSurco.toFixed(1) + " mm → **REEMPLAZO OBLIGATORIO**."));
-        else if (minSurco < 5.0) reviewMessages.push(msg('warning', "🟠 " + position + " (" + tireMakeModel + ") min " + minSurco.toFixed(1) + " mm → monitorear, próximo a reemplazo."));
-        else if (minSurco < 8.0) reviewMessages.push(msg('info', "🔵 " + position + " (" + tireMakeModel + ") " + minSurco.toFixed(1) + " mm → buen estado, programar rotación."));
-        if (diff > 2.0) reviewMessages.push(msg('alert', "🚨 Desgaste irregular en " + position + ". Δ " + diff.toFixed(1) + " mm → revisar **alineación y presión**."));
-        if (position === 'Repuesto' && minSurco < 10.0) reviewMessages.push(msg('warning', "🔧 Repuesto con " + minSurco.toFixed(1) + " mm → considerar uso/renovación."));
-      });
+            if ([s1, s2, s3].some(v => isNaN(v))) {
+                reviewMessages.push({type: 'error', text: `Error en ${position}: surcos incompletos o inválidos.`});
+                dataError = true; return;
+            }
 
-      if (dataError) { finishReview(btn); return displayReview(reviewMessages); }
-      if (reviewMessages.length === 0) reviewMessages.push(msg('success','✅ Evaluación OK. Listo para guardar.'));
+            const minSurco = Math.min(s1, s2, s3);
+            const maxSurco = Math.max(s1, s2, s3);
+            const diff = maxSurco - minSurco;
 
-      window.pendingReviewData = data;
-      document.getElementById('saveButton').disabled = false;
-      finishReview(btn);
-      displayReview(reviewMessages);
-      window.displayMessage('Revisión completa. Presiona "Guardar".','success');
-    }
+            data.tires.push({ position, makeModel, surco1: s1, surco2: s2, surco3: s3 });
+            if (photoFile) data.photoFiles.push({ file: photoFile, position });
 
-    function msg(type, text){ return { type, text }; }
-    function loaderSvg(label){ return '<svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white inline" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> ' + label; }
-    function finishReview(btn){ 
-        if(authReady) btn.disabled = !document.getElementById('vehicleType')?.value; 
-        btn.innerHTML = 'Evaluar Medición'; 
-    }
+            if (minSurco < 3.0) reviewMessages.push({type: 'alert', text: `⚠️ ${position} (${makeModel}) min ${minSurco.toFixed(1)} mm → <strong>REEMPLAZO OBLIGATORIO</strong>.`});
+            else if (minSurco < 5.0) reviewMessages.push({type: 'warning', text: `🟠 ${position} (${makeModel}) min ${minSurco.toFixed(1)} mm → Monitorear, próximo a reemplazo.`});
+            if (diff > 2.0) reviewMessages.push({type: 'alert', text: `🚨 Desgaste irregular en ${position}. Δ ${diff.toFixed(1)} mm → Revisar <strong>alineación y presión</strong>.`});
+        });
 
-    function displayReview(messages){
-      const reviewContainer = document.getElementById('reviewFeedback');
-      let html = '';
-      messages.forEach(m => {
-        let classes = 'p-3 rounded-lg text-sm mb-2 shadow-sm ';
-        if (m.type === 'alert') classes += 'bg-red-100 text-red-800 border-red-300 border-l-4';
-        else if (m.type === 'warning') classes += 'bg-yellow-100 text-yellow-800 border-yellow-300 border-l-4';
-        else if (m.type === 'success') classes += 'bg-green-100 text-green-800 border-green-300 border-l-4 font-bold';
-        else if (m.type === 'info') classes += 'bg-blue-100 text-blue-800 border-blue-300 border-l-4';
-        else if (m.type === 'error') classes += 'bg-gray-200 text-gray-800 border-red-500 border-l-4 font-bold';
-        html += '<div class="' + classes + '">' + m.text + '</div>';
-      });
-      reviewContainer.innerHTML = html;
-    }
+        if (dataError) {
+            displayReview(reviewMessages);
+            finishReview(reviewBtn);
+            return;
+        }
 
-    window.handleSave = async function(){
-      if (!authReady) return window.displayMessage('Error de autenticación. Intenta recargar.','error');
-      
-      const data = window.pendingReviewData;
-      if (!data) return window.displayMessage('Evalúa antes de guardar','error');
-      
-      const saveBtn = document.getElementById('saveButton');
-      saveBtn.disabled = true; saveBtn.innerHTML = loaderSvg('Guardando...');
-      try {
-        const uploaded = await Promise.all((data.photoFiles||[]).map(async it => ({ position: it.position, url: await uploadPhoto(it.file, it.position) })));
-        data.tires = data.tires.map(t => { const f = uploaded.find(u => u.position === t.position); return { ...t, photoURL: f ? f.url : t.photoURL }; });
-        const { photoFiles, ...finalRecord } = { ...data, timestamp: serverTimestamp() };
-        const recordsRef = collection(db, "/artifacts/" + appId + "/public/data/tire_records");
-        await addDoc(recordsRef, finalRecord);
-        window.displayMessage('✅ Registro guardado con éxito','success');
-        document.getElementById('registrationForm').reset();
-        document.getElementById('tireInputsContainer').innerHTML = '';
-        document.getElementById('reviewFeedback').innerHTML = '';
-        window.pendingReviewData = null;
-        
-        const reviewBtn = document.getElementById('reviewButton');
-        if (reviewBtn) reviewBtn.disabled = true;
+        if (reviewMessages.length === 0) {
+            reviewMessages.push({type: 'success', text: '✅ Todos los neumáticos en buen estado. Listo para guardar.'});
+        }
+        
+        window.pendingReviewData = data;
+        saveBtn.disabled = false;
+        displayReview(reviewMessages);
+        finishReview(reviewBtn);
+        displayAppMessage('Revisión completa. Presiona "Guardar Registro".', 'success');
+    }
 
-        const dateEl = document.getElementById('date');
-        if (dateEl) dateEl.value = new Date().toISOString().slice(0,10);
-      } catch (e) {
-        console.error('Guardar error', e);
-        window.displayMessage("❌ Error al guardar: " + e.message,'error');
-      } finally {
-        saveBtn.disabled = false; saveBtn.innerHTML = 'Guardar Registro';
-      }
-    }
+    function finishReview(btn) {
+      if (authReady) btn.disabled = !document.getElementById('vehicleType')?.value;
+      btn.innerHTML = 'Evaluar Medición';
+    }
+    
+    function displayReview(messages) {
+      const container = document.getElementById('reviewFeedback');
+      const typeClasses = {
+        alert: 'bg-red-100 text-red-800 border-red-400',
+        warning: 'bg-yellow-100 text-yellow-800 border-yellow-400',
+        success: 'bg-green-100 text-green-800 border-green-400 font-bold',
+        error: 'bg-gray-200 text-gray-800 border-red-500 font-bold',
+      };
+      container.innerHTML = messages.map(m => `
+        <div class="p-3 rounded-lg text-sm mb-2 shadow-sm border-l-4 ${typeClasses[m.type] || 'bg-blue-100 text-blue-800 border-blue-400'}">
+          ${m.text}
+        </div>`).join('');
+    }
 
-    window.displayMessage = function(message, type='info'){
-      const container = document.getElementById('appMessage');
-      let classes = 'p-3 rounded-lg text-sm mb-4 font-medium shadow-md transition-opacity duration-300';
-      classes += (type==='success') ? ' bg-green-500 text-white' : (type==='error' ? ' bg-red-500 text-white' : ' bg-blue-500 text-white');
-      container.className = classes;
-      container.textContent = message;
-      container.classList.remove('opacity-0','hidden');
-      setTimeout(()=>{ container.classList.add('opacity-0'); setTimeout(()=> container.classList.add('hidden'), 300); }, 5000);
-    }
+    function getPositionDescription(pos) {
+      const descriptions = {
+        'I1': 'Eje 1 - Delantera Izquierda (Conductor)', 'D1': 'Eje 1 - Delantera Derecha',
+        'I2': 'Eje 2 - Trasera Izquierda', 'D2': 'Eje 2 - Trasera Derecha',
+        'I3': 'Eje 2 (Interior) - Izquierda (Doble Rodado)', 'D3': 'Eje 2 (Interior) - Derecha (Doble Rodado)',
+        'Repuesto': 'Rueda de Repuesto'
+      };
+      return descriptions[pos] || pos;
+    }
 
-    function updateRandomRecommendation(){
-      const tip = longevityTips[Math.floor(Math.random()*longevityTips.length)];
-      document.getElementById('randomTip').innerHTML = tip.replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>');
-    }
+    function getLoaderSvg(label) {
+      return `<svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white inline" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> ${label}`;
+    }
 
-    function displayRecords(records){
-      const container = document.getElementById('recordsTableBody');
-      container.innerHTML = '';
-      if (!records.length) { container.innerHTML = '<tr><td colspan="7" class="text-center py-4 text-gray-500">No hay registros disponibles en el historial.</td></tr>'; return; }
-      
-      records.forEach(record => {
-        const dateStr = record.date ? new Date(record.date).toLocaleDateString('es-CL') : '-';
-        const minSurco = (record.tires||[]).reduce((min, t)=> Math.min(min, t.surco1, t.surco2, t.surco3), 99);
-        const criticalClass = minSurco < 3.0 ? 'bg-red-100 text-red-800 font-bold' : (minSurco < 5.0 ? 'bg-yellow-100 text-yellow-800' : 'text-gray-700');
-        const branch = record.branchName || 'N/A';
-        
-        const row = '<tr class="border-b hover:bg-gray-50 transition">' +
-          '<td class="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">' + record.orderNumber + '</td>' +
-          '<td class="px-4 py-3 whitespace-nowrap text-sm text-gray-600 font-semibold">' + branch + '</td>' +
-          '<td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">' + record.vehicleType + '</td>' +
-          '<td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">' + (record.mileage||0).toLocaleString('es-CL') + ' km</td>' +
-          '<td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">' + dateStr + '</td>' +
-          '<td class="px-4 py-3 whitespace-nowrap text-sm ' + criticalClass + '">' + (Number.isFinite(minSurco)?minSurco.toFixed(1):'-') + ' mm</td>' +
-          '<td class="px-4 py-3 whitespace-nowrap text-right text-sm font-medium">' +
-            '<button onclick="window.analyzeRecord(\'' + record.id + '\')" class="text-primary hover:text-secondary p-2 rounded-full transition"><span class="text-lg">✨</span> Analizar</button>' +
-          '</td>' +
-        '</tr>';
-        container.insertAdjacentHTML('beforeend', row);
-      });
-    }
+    function displayAppMessage(message, type = 'info') {
+      const container = document.getElementById('appMessage');
+      const typeClasses = {
+        success: 'bg-green-500 text-white',
+        error: 'bg-red-500 text-white',
+        info: 'bg-blue-500 text-white'
+      };
+      container.className = `p-3 rounded-lg text-sm mb-4 font-medium shadow-md transition-all duration-300 ${typeClasses[type]}`;
+      container.textContent = message;
+      container.classList.remove('opacity-0', 'hidden', 'max-h-0', 'py-0', 'mb-0');
+      container.style.maxHeight = '100px';
 
-    window.exportToCsv = function(){
-      if (!window.currentRecords.length) return window.displayMessage('No hay datos para exportar','error');
-      let csv = "data:text/csv;charset=utf-8,";
-      const baseHeaders = ["Orden","Sucursal","Kilometraje","Fecha","Tipo Vehículo","Marca General","Medida","Comentarios","Técnico_ID"];
-      const superset = Array.from(new Set(Object.values(TIRES_STRUCTURE).flat()));
-      const tireHeaders = superset.flatMap(pos => [
-        "Posicion_" + pos + "_Modelo","Posicion_" + pos + "_Surco1","Posicion_" + pos + "_Surco2","Posicion_" + pos + "_Surco3","Posicion_" + pos + "_FotoURL"
-      ]);
-      const headers = baseHeaders.concat(tireHeaders);
-      csv += headers.join(";") + "\r\n";
+      setTimeout(() => {
+        container.classList.add('opacity-0');
+        container.style.maxHeight = '0px';
+        setTimeout(() => container.classList.add('hidden'), 300);
+      }, 5000);
+    }
 
-      window.currentRecords.forEach(record => {
-        const row = [
-          record.orderNumber,
-          record.branchName || 'N/A',
-          record.mileage,
-          record.date,
-          record.vehicleType,
-          record.generalMakeModel,
-          record.tireSize,
-          '"' + (record.generalComments||'').replace(/"/g,'""') + '"',
-          record.technicianId
-        ];
-        const tMap = (record.tires||[]).reduce((acc,t)=>{ acc[t.position]=t; return acc; },{});
-        superset.forEach(pos => {
-          const t = tMap[pos];
-          row.push(t ? t.makeModel : '');
-          row.push(t ? t.surco1 : '');
-          row.push(t ? t.surco2 : '');
-          row.push(t ? t.surco3 : '');
-          row.push(t ? (t.photoURL==='N/A'?'':t.photoURL) : '');
-        });
-        csv += row.join(";") + "\r\n";
-      });
+    function updateRandomRecommendation() {
+      const tip = longevityTips[Math.floor(Math.random() * longevityTips.length)];
+      document.getElementById('randomTip').innerHTML = tip;
+    }
 
-      const uri = encodeURI(csv);
-      const a = document.createElement('a');
-      a.href = uri; a.download = 'registros_neumaticos_' + (new Date().toISOString().slice(0, 10)) + '.csv';
-      document.body.appendChild(a); a.click(); a.remove();
-      window.displayMessage('Exportación lista (CSV)','success');
-    }
-    
-    // === INIT ===
-    window.onload = function(){
-      const dateEl = document.getElementById('date');
-      if (dateEl) dateEl.value = new Date().toISOString().slice(0,10);
+    function displayRecords(records) {
+      const container = document.getElementById('recordsTableBody');
+      if (!container) return;
+      if (!records.length) {
+        container.innerHTML = '<tr><td colspan="7" class="text-center py-8 text-gray-500">No hay registros disponibles.</td></tr>';
+        return;
+      }
+      container.innerHTML = records.map(record => {
+        const dateStr = record.date ? new Date(record.date).toLocaleDateString('es-CL', {timeZone: 'UTC'}) : '-';
+        const minSurco = (record.tires || []).reduce((min, t) => Math.min(min, t.surco1, t.surco2, t.surco3), 99);
+        const criticalClass = minSurco < 3.0 ? 'bg-red-100 text-red-800 font-bold' : (minSurco < 5.0 ? 'bg-yellow-100 text-yellow-800' : 'text-gray-700');
+        return `
+          <tr class="border-b hover:bg-gray-50 transition">
+            <td class="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">${record.orderNumber}</td>
+            <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-600 font-semibold">${record.branchName || 'N/A'}</td>
+            <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${record.vehicleType}</td>
+            <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${(record.mileage || 0).toLocaleString('es-CL')} km</td>
+            <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${dateStr}</td>
+            <td class="px-4 py-3 whitespace-nowrap text-sm ${criticalClass}">${isFinite(minSurco) ? minSurco.toFixed(1) : '-'} mm</td>
+            <td class="px-4 py-3 whitespace-nowrap text-right text-sm font-medium">
+              <button onclick="window.analyzeRecord('${record.id}')" class="text-primary hover:text-secondary p-2 rounded-lg transition hover:bg-primary/10 flex items-center gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3c7.2 0 9 1.8 9 9s-1.8 9-9 9-9-1.8-9-9 1.8-9 9-9"/><path d="M12 15h.01"/><path d="M12 12V9"/></svg>
+                Analizar
+              </button>
+            </td>
+          </tr>`;
+      }).join('');
+    }
 
-      initializeFirebase().then(() => {
-        const makeModelSelect = document.getElementById('makeModel');
-        const tireSizeSelect = document.getElementById('tireSize');
-        PREDEFINED_MODELS.forEach(m => makeModelSelect.insertAdjacentHTML('beforeend', '<option value="' + m + '">' + m + '</option>'));
-        PREDEFINED_SIZES.forEach(s => tireSizeSelect.insertAdjacentHTML('beforeend', '<option value="' + s + '">' + s + '</option>'));
-        
-        const branchSelect = document.getElementById('branchName');
-        BRANCHES.forEach(b => branchSelect.insertAdjacentHTML('beforeend', '<option value="' + b + '">' + b + '</option>'));
-        
-        window.switchTab('guide');
-      });
-    }
-  </script>
+    function formatRecordForPrompt(record) {
+      let detail = `Sucursal: ${record.branchName || "N/A"}\n`;
+      detail += `Tipo Vehículo: ${record.vehicleType}\n`;
+      detail += `Medida General: ${record.tireSize || 'N/A'}\n`;
+      detail += `Marca/Modelo General: ${record.generalMakeModel}\n`;
+      detail += `Comentarios: "${record.generalComments || 'Ninguno'}"\n\n`;
+      detail += "Estado de Neumáticos:\n";
+      (record.tires || []).forEach(t => {
+        const minSurco = Math.min(t.surco1, t.surco2, t.surco3);
+        const maxSurco = Math.max(t.surco1, t.surco2, t.surco3);
+        const diff = maxSurco - minSurco;
+        detail += `- ${t.position} (${t.makeModel}): ${t.surco1}/${t.surco2}/${t.surco3} mm. Mín: ${minSurco.toFixed(1)}. Δ: ${diff.toFixed(1)} mm.\n`;
+      });
+      detail += "\nLímite legal flota: 3.0 mm.";
+      return detail;
+    }
+
+    window.exportToCsv = function() {
+      if (!window.currentRecords.length) return displayAppMessage('No hay datos para exportar', 'error');
+      let csvContent = "data:text/csv;charset=utf-8,";
+      const superset = Array.from(new Set(Object.values(TIRES_STRUCTURE).flat()));
+      const headers = [
+        "Orden", "Sucursal", "Kilometraje", "Fecha", "Tipo Vehículo", "Marca General", "Medida", "Comentarios", "ID Técnico",
+        ...superset.flatMap(pos => [`Modelo_${pos}`, `Surco1_${pos}`, `Surco2_${pos}`, `Surco3_${pos}`, `FotoURL_${pos}`])
+      ];
+      csvContent += headers.join(";") + "\r\n";
+
+      window.currentRecords.forEach(record => {
+        const tireMap = (record.tires || []).reduce((acc, t) => ({ ...acc, [t.position]: t }), {});
+        const row = [
+          record.orderNumber, record.branchName || 'N/A', record.mileage, record.date, record.vehicleType,
+          record.generalMakeModel, record.tireSize, `"${(record.generalComments || '').replace(/"/g, '""')}"`, record.technicianId,
+          ...superset.flatMap(pos => {
+            const t = tireMap[pos];
+            return [t ? t.makeModel : '', t ? t.surco1 : '', t ? t.surco2 : '', t ? t.surco3 : '', t && t.photoURL !== 'N/A' ? t.photoURL : ''];
+          })
+        ];
+        csvContent += row.join(";") + "\r\n";
+      });
+
+      const encodedUri = encodeURI(csvContent);
+      const link = document.createElement("a");
+      link.setAttribute("href", encodedUri);
+      link.setAttribute("download", `registros_neumaticos_${new Date().toISOString().slice(0, 10)}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      displayAppMessage('Exportación a CSV completada.', 'success');
+    }
+    
+    // === INICIO DE LA APP ===
+    window.onload = function() {
+      initializeAppCore().then(() => {
+        const makeModelSelect = document.getElementById('makeModel');
+        const tireSizeSelect = document.getElementById('tireSize');
+        const branchSelect = document.getElementById('branchName');
+        PREDEFINED_MODELS.forEach(m => makeModelSelect.insertAdjacentHTML('beforeend', `<option value="${m}">${m}</option>`));
+        PREDEFINED_SIZES.forEach(s => tireSizeSelect.insertAdjacentHTML('beforeend', `<option value="${s}">${s}</option>`));
+        BRANCHES.forEach(b => branchSelect.insertAdjacentHTML('beforeend', `<option value="${b}">${b}</option>`));
+        
+        window.switchTab('guide');
+      });
+    }
+  </script>
 </head>
 
-<body class="bg-background min-h-screen flex flex-col">
-    <div id="app-container" class="flex flex-col flex-grow">
-                <header class="bg-white shadow-md sticky top-0 z-10">
-            <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-3">
-                <div class="flex justify-between items-center">
-                    <h1 class="text-2xl font-bold text-gray-800">
-                        <span class="text-primary">Flota</span> TRACK
-                    </h1>
-                    <div class="flex items-center space-x-4">
-                        <span id="firebaseErrorDisplay" class="text-sm font-medium text-red-600"></span> 
-                        <span id="userIdDisplay" class="text-sm font-medium text-gray-600">ID Técnico: Cargando...</span>
-                    </div>
-                </div>
-            </div>
-                        <nav class="border-t border-gray-200">
-                <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-                    <div class="flex space-x-4 sm:space-x-8">
-                        </div>
-              </div>
-          </nav>
-      </header>
+<body class="bg-background">
+  <div id="app-container" class="flex flex-col">
+    <!-- Encabezado Fijo -->
+    <header class="bg-white shadow-md sticky top-0 z-10">
+      <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-3">
+        <div class="flex justify-between items-center">
+          <h1 class="text-2xl font-bold text-gray-800">
+            <span class="text-primary">Flota</span> TRACK
+          </h1>
+          <div class="flex items-center space-x-4">
+            <span id="firebaseErrorDisplay" class="text-sm font-medium text-red-600"></span>
+            <span id="userIdDisplay" class="text-sm font-medium text-gray-600"></span>
+          </div>
+        </div>
       </div>
+      <!-- Navegación por Pestañas -->
+      <nav class="border-t border-gray-200">
+        <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div class="flex space-x-4 sm:space-x-8 -mb-px">
+            <button id="tab-button-guide" onclick="switchTab('guide')" type="button" class="tab-button">Guía Rápida</button>
+            <button id="tab-button-register" onclick="switchTab('register')" type="button" class="tab-button">Registrar</button>
+            <button id="tab-button-records" onclick="switchTab('records')" type="button" class="tab-button">Historial</button>
+          </div>
+        </div>
+      </nav>
+    </header>
+
+    <!-- Contenido Principal -->
+    <main class="flex-grow max-w-4xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8">
+      <!-- Mensajes Globales de la App -->
+      <div id="appMessage" class="hidden opacity-0 max-h-0 transition-all duration-300"></div>
+
+      <!-- Contenido de Pestañas -->
+      <div id="tab-content-guide" class="hidden">
+        <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+            <h2 class="text-xl font-bold text-gray-800 mb-4">Bienvenido a Flota TRACK</h2>
+            <p class="text-gray-600 mb-6">Esta herramienta te permite registrar y analizar el estado de los surcos de los neumáticos de tu flota. Sigue estos pasos para un uso correcto:</p>
+            <ol class="list-decimal list-inside space-y-3 text-gray-700">
+                <li><strong>Registrar Medición:</strong> Ve a la pestaña "Registrar", completa los datos del vehículo y mide los 3 surcos principales de cada neumático.</li>
+                <li><strong>Evaluar:</strong> Presiona "Evaluar Medición" para obtener un diagnóstico inmediato sobre el estado y las acciones recomendadas.</li>
+                <li><strong>Guardar:</strong> Si la evaluación es correcta, guarda el registro. Quedará almacenado en el "Historial".</li>
+                <li><strong>Analizar con IA:</strong> En el historial, usa el botón "✨ Analizar" para que un experto virtual te dé recomendaciones avanzadas sobre mantenimiento y rotación.</li>
+            </ol>
+             <div class="mt-8 p-4 bg-primary/10 border-l-4 border-primary rounded-r-lg">
+                <h3 class="font-semibold text-primary mb-2">Consejo de longevidad</h3>
+                <p id="randomTip" class="text-sm text-gray-700"></p>
+            </div>
+        </div>
+      </div>
+
+      <div id="tab-content-register" class="hidden">
+        <form id="registrationForm" onsubmit="handleReview(event)">
+          <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-200 mb-6">
+            <h3 class="text-xl font-bold text-gray-800 mb-4">1. Datos Generales del Vehículo</h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label for="branchName" class="block text-sm font-medium text-gray-700 mb-1">Sucursal</label>
+                <select id="branchName" name="branchName" class="form-control" required><option value="" disabled selected>Selecciona una sucursal...</option></select>
+              </div>
+              <div>
+                <label for="orderNumber" class="block text-sm font-medium text-gray-700 mb-1">Número de Orden</label>
+                <input type="number" id="orderNumber" name="orderNumber" class="form-control" placeholder="Ej: 12345" required />
+              </div>
+              <div>
+                <label for="mileage" class="block text-sm font-medium text-gray-700 mb-1">Kilometraje</label>
+                <input type="number" id="mileage" name="mileage" class="form-control" placeholder="Ej: 85000" required />
+              </div>
+              <div>
+                <label for="date" class="block text-sm font-medium text-gray-700 mb-1">Fecha de Medición</label>
+                <input type="date" id="date" name="date" class="form-control" required />
+              </div>
+              <div>
+                <label for="tireSize" class="block text-sm font-medium text-gray-700 mb-1">Medida General</label>
+                <select id="tireSize" name="tireSize" class="form-control" required><option value="" disabled selected>Selecciona una medida...</option></select>
+              </div>
+              <div>
+                <label for="makeModel" class="block text-sm font-medium text-gray-700 mb-1">Marca/Modelo General</label>
+                <select id="makeModel" name="makeModel" class="form-control" required><option value="" disabled selected>Selecciona una marca...</option></select>
+              </div>
+               <div class="md:col-span-2">
+                <label for="generalComments" class="block text-sm font-medium text-gray-700 mb-1">Comentarios Generales</label>
+                <textarea id="generalComments" name="generalComments" rows="2" class="form-control" placeholder="Observaciones sobre el vehículo, alineación, etc."></textarea>
+              </div>
+            </div>
+          </div>
+
+          <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-200 mb-6">
+            <h3 class="text-xl font-bold text-gray-800 mb-4">2. Selección y Medición</h3>
+             <div>
+                <label for="vehicleType" class="block text-sm font-medium text-gray-700 mb-1">Tipo de Vehículo</label>
+                <select id="vehicleType" name="vehicleType" class="form-control" onchange="generateTireInputs()" required>
+                  <option value="" disabled selected>Selecciona un tipo para generar los campos...</option>
+                  <option value="Bus">Bus</option>
+                  <option value="Taxibus">Taxibus</option>
+                  <option value="Minibús">Minibús</option>
+                  <option value="Minibús DR (Doble Rodado)">Minibús DR (Doble Rodado)</option>
+                  <option value="Camioneta">Camioneta</option>
+                </select>
+              </div>
+          </div>
+
+          <div id="tireInputsContainer" class="mb-6"></div>
+          
+          <div id="reviewFeedback" class="mb-6"></div>
+
+          <div class="flex items-center justify-end space-x-4">
+            <button id="reviewButton" type="submit" class="px-6 py-3 bg-accent text-gray-800 font-bold rounded-lg shadow-sm hover:bg-yellow-400 transition disabled:bg-gray-300 disabled:cursor-not-allowed">
+              Evaluar Medición
+            </button>
+            <button id="saveButton" type="button" onclick="handleSave()" class="px-6 py-3 bg-primary text-white font-bold rounded-lg shadow-sm hover:bg-secondary transition disabled:bg-green-800 disabled:cursor-not-allowed" disabled>
+              Guardar Registro
+            </button>
+          </div>
+        </form>
+      </div>
+
+      <div id="tab-content-records" class="hidden">
+         <div class="flex justify-between items-center mb-4">
+            <h2 class="text-xl font-bold text-gray-800">Historial de Registros</h2>
+            <button onclick="exportToCsv()" class="px-4 py-2 bg-secondary text-white font-semibold text-sm rounded-lg shadow-sm hover:bg-primary transition">
+              Exportar a CSV
+            </button>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-x-auto">
+            <table class="w-full text-left">
+                <thead class="bg-gray-50 border-b">
+                    <tr>
+                        <th class="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">Orden</th>
+                        <th class="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">Sucursal</th>
+                        <th class="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">Vehículo</th>
+                        <th class="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">KM</th>
+                        <th class="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">Fecha</th>
+                        <th class="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">Surco Mín.</th>
+                        <th class="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider text-right">Acciones</th>
+                    </tr>
+                </thead>
+                <tbody id="recordsTableBody">
+                    <!-- Filas se insertarán dinámicamente -->
+                </tbody>
+            </table>
+        </div>
+      </div>
+
+    </main>
+  </div>
 </body>
 </html>
