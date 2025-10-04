@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Registro de Surcos de Neumáticos para Flota Verschae</title>
+    <title>Registro de Surcos de Neumáticos</title>
     <!-- Carga de Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -113,16 +113,20 @@
             auth = getAuth(app);
             storage = getStorage(app); // Inicializar Firebase Storage
 
+            // Aseguramos que la UI del ID se actualice inmediatamente tras la autenticación
+            const uidSpan = document.getElementById('userIdDisplay');
+            if (uidSpan) uidSpan.textContent = 'Autenticando...';
+
             onAuthStateChanged(auth, (user) => {
                 isAuthReady = true;
                 if (user) {
                     currentUserId = user.uid;
+                    if (uidSpan) uidSpan.textContent = currentUserId;
                     loadRecords();
                 } else {
                     currentUserId = 'anonymous';
+                    if (uidSpan) uidSpan.textContent = currentUserId;
                 }
-                const uidSpan = document.getElementById('userIdDisplay');
-                if (uidSpan) uidSpan.textContent = currentUserId;
             });
 
             try {
@@ -615,6 +619,17 @@
                     sizeSelect.appendChild(option);
                 });
             }
+            
+            // NUEVA: Rellenar lista de Marcas y Modelos Generales
+            const makeModelSelect = document.getElementById('makeModel');
+            if (makeModelSelect) {
+                PREDEFINED_MODELS.forEach(model => {
+                    const option = document.createElement('option');
+                    option.value = model;
+                    option.textContent = model;
+                    makeModelSelect.appendChild(option);
+                });
+            }
 
             // Establecer fecha actual
             document.getElementById('date').valueAsDate = new Date();
@@ -723,10 +738,13 @@
                         </select>
                     </div>
 
+                    <!-- CORRECCIÓN: Ahora es un SELECT para forzar la consistencia de datos -->
                     <div class="md:col-span-1">
                         <label for="makeModel" class="block text-sm font-medium text-gray-700 mb-1">Marca y Modelo (General)</label>
-                        <input type="text" id="makeModel" name="makeModel" required list="modelOptions" class="form-control" placeholder="Ej: Michelin X Multiway 3D XZE">
-                        <!-- datalist for autocomplete is added via JS -->
+                        <select id="makeModel" name="makeModel" required class="form-control">
+                            <option value="" disabled selected>Seleccione marca y modelo</option>
+                            <!-- Options added by JS -->
+                        </select>
                     </div>
                     <div class="md:col-span-1">
                         <label for="vehicleType" class="block text-sm font-medium text-gray-700 mb-1">Tipo de Vehículo</label>
@@ -806,17 +824,5 @@
             <div id="loadingIndicator" class="mt-4 text-center text-gray-500 hidden">Cargando datos...</div>
         </div>
     </div>
-
-    <datalist id="modelOptions">
-        <!-- Opciones añadidas manualmente para la demostración de autocompletar, aunque se recomienda usar el selector -->
-        <option value="Michelin X Multiway 3D XZE">
-        <option value="Pirelli FH:01 Energy">
-        <option value="Bridgestone R260">
-        <option value="Dunlop SP338">
-        <option value="Goodyear KMAX S">
-        <option value="Continental HT3">
-        <option value="Hankook SmartFlex AH31">
-    </datalist>
 </body>
 </html>
-
