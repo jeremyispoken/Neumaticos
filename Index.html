@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Registro de Surcos de Neumáticos</title>
+    <!-- Carga de Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'primary': '#059669', // Emerald 600
+                        'secondary': '#10b981', // Emerald 500
+                        'accent': '#fbbf24', // Amber 400
+                        'background': '#f9fafb', // Gray 50
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                }
+            }
+        }
+    </script>
+    <style>
+        html, body { height: 100%; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
+        #app-container { min-height: 100vh; }
+        .tab-button { transition: all 0.2s; }
+        .tab-button.active {
+            border-bottom: 4px solid #059669;
+            font-weight: 600;
+            color: #059669;
+        }
+        .form-control {
+            border-radius: 0.5rem;
+            border: 1px solid #d1d5db;
+            padding: 0.5rem 0.75rem;
+            width: 100%;
+            transition: all 0.15s;
+        }
+        .form-control:focus {
+            border-color: #059669;
+            box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.5);
+            outline: none;
+        }
+    </style>
+    <!-- Carga de Firebase SDKs y Lógica de la Aplicación (Módulo JS) -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, addDoc, onSnapshot, collection, query, serverTimestamp, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        // IMPORTANTE: Nuevo import para Firebase Storage
+        import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-storage.js";
+
+        setLogLevel('debug');
+
+        // --- CONSTANTES Y VARIABLES GLOBALES (Accedidas a través de window.) ---
+
+        window.app = null;
+        window.db = null;
+        window.auth = null;
+        window.storage = null; // Instancia de Firebase Storage
+        window.userId = null;
+        window.isAuthReady = false;
+        let currentRecords = [];
+        let pendingReviewData = null; // Almacena los datos revisados temporalmente (incluye archivos de fotos)
+
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        const TIRES_STRUCTURE = {
+            'Bus': ['I1', 'D1', 'I2', 'D2', 'I3', 'D3', 'Repuesto'],
+            'Taxibus': ['I1', 'D1', 'I2', 'D2', 'I3', 'D3', 'Repuesto'],
+            'Minibús': ['I1', 'D1', 'I2', 'D2', 'Repuesto'],
+            'Minibús DR (Doble Rodado)': ['I1', 'D1', 'I2', 'D2', 'I3', 'D3', 'Repuesto'],
+            'Camioneta': ['I1', 'D1', 'I2', 'D2', 'Repuesto'],
+        };
+
+        const PREDEFINED_MODELS = [
+            'Michelin X Multiway 3D XZE', 'Pirelli FH:01 Energy', 'Bridgestone R260',
+            'Dunlop SP338', 'Goodyear KMAX S', 'Continental HT3',
+            'Hankook SmartFlex AH31', 'Westlake CB867', 'Sailun S701'
+        ];
+        
+        const PREDEFINED_SIZES = [
+            '225/75R16', '245/70R19.5', '275/80R22.5', '295/80R22.5', 
+            '315/80R22.5', '11R22.5', '12R22.5', '10.00R20'
+        ];
+
+        const longevityTips = [
+            "Mantén la **presión correcta** semanalmente. La subinflación es el principal asesino de neumáticos.",
+            "Realiza la **rotación de neumáticos** cada 10,000 a 12,000 km para asegurar un desgaste uniforme.",
+            "Alinea las ruedas si notas un desgaste irregular o si has golpeado un hoyo fuerte.",
+            "Balancea los neumáticos cuando los montes por primera vez o después de reparaciones para evitar vibraciones.",
+            "Inspecciona visualmente las ruedas en busca de cortes, protuberancias o incrustaciones de objetos extraños (piedras, vidrios).",
+            "Evita arrancar o frenar bruscamente. Conduce de forma suave para minimizar el desgaste prematuro.",
+            "Revisa la suspensión y los amortiguadores, ya que su mal estado provoca un desgaste irregular.",
+            "Limpia los neumáticos y llantas regularmente. La suciedad y químicos pueden deteriorar el caucho con el tiempo."
+        ];
+        
+        // --- FUNCIONES DE FIREBASE ---
+
+        async function initializeFirebase() {
+            if (!firebaseConfig) {
+                console.error("Error: firebaseConfig no está disponible. No se puede inicializar Firebase.");
+                return;
+            }
+
+            window.app = initializeApp(firebaseConfig);
+            window.db = getFirestore(window.app);
+            window.auth = getAuth(window.app);
+            window.storage = getStorage(window.app); // Inicializar Firebase Storage
+
+            onAuthStateChanged(window.auth, (user) => {
+                window.isAuthReady = true;
+                if (user) {
+                    window.userId = user.uid;
+                    window.loadRecords();
+                } else {
+                    window.userId = 'anonymous';
+                }
+            });
+
+            try {
+                if (initialAuthToken) {
+                    await signInWithCustomToken(window.auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(window.auth);
+                }
+            } catch (error) {
+                console.error("Error en la autenticación:", error);
+                try {
+                    await signInAnonymously(window.auth);
+                } catch (anonError) {
+                    console.error("Error al iniciar sesión anónimamente:", anonError);
+                }
+            }
+        }
+
+        window.loadRecords = function() {
+            if (!window.db || !window.isAuthReady) {
+                setTimeout(window.loadRecords, 500);
+                return;
+            }
+
+            const recordsRef = collection(window.db, `/artifacts/${appId}/users/${window.userId}/tire_depth_records`);
+            const q = query(recordsRef);
+
+            onSnapshot(q, (snapshot) => {
+                const records = [];
+                snapshot.forEach((doc) => {
+                    records.push({ id: doc.id, ...doc.data() });
+                });
+                displayRecords(records.sort((a, b) => b.orderNumber - a.orderNumber));
+            }, (error) => {
+                console.error("Error al obtener los registros en tiempo real:", error);
+            });
+        }
+
+        // --- FUNCIONES GENERALES DE LA APP ---
+
+        window.switchTab = function(tabName) {
+            ['guide', 'register', 'records'].forEach(tab => {
+                const button = document.getElementById(`tab-button-${tab}`);
+                const content = document.getElementById(`tab-content-${tab}`);
+
+                if (button) button.classList.toggle('active', tab === tabName);
+                if (content) content.classList.toggle('hidden', tab !== tabName);
+            });
+            if (tabName === 'guide') {
+                window.updateRandomRecommendation();
+            } else if (tabName === 'register') {
+                document.getElementById('reviewFeedback').innerHTML = '';
+                document.getElementById('saveButton').disabled = true;
+                pendingReviewData = null;
+            }
+        }
+
+        window.generateTireInputs = function() {
+            const vehicleType = document.getElementById('vehicleType').value;
+            const container = document.getElementById('tireInputsContainer');
+            container.innerHTML = '';
+
+            const positions = TIRES_STRUCTURE[vehicleType] || [];
+
+            positions.forEach((position, index) => {
+                const positionDesc = getPositionDescription(position);
+
+                const html = `
+                    <div class="p-4 border border-gray-200 rounded-xl shadow-sm mb-4 bg-white">
+                        <h4 class="text-lg font-semibold text-primary mb-3">Neumático - Posición ${index + 1} (${position})</h4>
+                        <p class="text-sm text-gray-500 mb-4">${positionDesc}</p>
+
+                        <!-- Marca y Modelo por Neumático (Anula el general) -->
+                        <div class="mb-4">
+                            <label for="tireMakeModel-${index}" class="block text-xs font-medium text-gray-700 mb-1">Marca y Modelo (Específico)</label>
+                            <select id="tireMakeModel-${index}" name="tireMakeModel_${position}" class="form-control text-sm">
+                                <option value="" selected>Usar marca general del formulario principal</option>
+                                ${PREDEFINED_MODELS.map(model => `<option value="${model}">${model}</option>`).join('')}
+                            </select>
+                        </div>
+
+                        <!-- Campos de Surcos (Surco 1, 2, 3) -->
+                        <div class="grid grid-cols-3 gap-2 mb-4">
+                            ${[1, 2, 3].map(i => `
+                                <div>
+                                    <label for="surco-${index}-${i}" class="block text-xs font-medium text-gray-700 mb-1">Surco ${i} (mm)</label>
+                                    <input type="number" id="surco-${index}-${i}" name="surco_${position}_${i}" min="0" max="25" step="0.1"
+                                           class="form-control text-sm" placeholder="Ej: 5.5" required>
+                                </div>
+                            `).join('')}
+                        </div>
+
+                        <!-- Campo de Foto -->
+                        <div>
+                            <label for="photo-${index}" class="block text-xs font-medium text-gray-700 mb-1">Foto (Menor Surco - Opcional)</label>
+                            <input type="file" id="photo-${index}" name="photo_${position}" accept="image/*"
+                                   class="block w-full text-sm text-gray-500
+                                   file:mr-4 file:py-2 file:px-4
+                                   file:rounded-full file:border-0
+                                   file:text-sm file:font-semibold
+                                   file:bg-secondary/10 file:text-secondary
+                                   hover:file:bg-secondary/20">
+                            <p class="text-xs text-gray-400 mt-1">Sube la foto para guardarla en tu cuenta.</p>
+                        </div>
+                    </div>
+                `;
+                container.insertAdjacentHTML('beforeend', html);
+            });
+        }
+
+        function getPositionDescription(pos) {
+            switch(pos) {
+                case 'I1': return 'Eje 1 - Delantera Izquierda (Posición 1 - Conductor)';
+                case 'D1': return 'Eje 1 - Delantera Derecha';
+                case 'I2': return 'Eje 2 - Trasera Izquierda';
+                case 'D2': return 'Eje 2 - Trasera Derecha';
+                case 'I3': return 'Eje 2 (Interior) - Izquierda (Doble Rodado)';
+                case 'D3': return 'Eje 2 (Interior) - Derecha (Doble Rodado)';
+                case 'Repuesto': return 'Rueda de Repuesto';
+                default: return pos;
+            }
+        }
+        
+        /**
+         * Realiza la evaluación técnica de los datos y prepara la subida.
+         */
+        window.handleReview = function(event) {
+            event.preventDefault();
+            const form = document.getElementById('registrationForm');
+            const btn = document.getElementById('reviewButton');
+            const saveBtn = document.getElementById('saveButton');
+            const reviewContainer = document.getElementById('reviewFeedback');
+            let reviewMessages = [];
+
+            btn.disabled = true;
+            btn.innerHTML = 'Evaluando...';
+            saveBtn.disabled = true;
+            reviewContainer.innerHTML = '';
+            pendingReviewData = null;
+
+            if (!window.db || !window.userId) {
+                reviewMessages.push({ type: 'error', text: 'Error: Base de datos no lista. Intenta nuevamente.' });
+                btn.disabled = false;
+                btn.innerHTML = 'Evaluar Medición';
+                displayReview(reviewMessages);
+                return;
+            }
+
+            const vehicleType = form.vehicleType.value;
+            const generalMakeModel = form.makeModel.value;
+            const orderNumber = parseInt(form.orderNumber.value);
+            const mileage = parseInt(form.mileage.value);
+            const generalComments = form.generalComments.value;
+
+            if (isNaN(orderNumber) || isNaN(mileage) || !form.date.value || !generalMakeModel || !form.tireSize.value) {
+                 reviewMessages.push({ type: 'error', text: 'Error: Debes completar todos los campos principales (Orden, Kilometraje, Fecha, Medida, Marca/Modelo General).' });
+                 btn.disabled = false;
+                 btn.innerHTML = 'Evaluar Medición';
+                 displayReview(reviewMessages);
+                 return;
+            }
+
+            const data = {
+                orderNumber: orderNumber,
+                mileage: mileage,
+                date: form.date.value,
+                tireSize: form.tireSize.value,
+                vehicleType: vehicleType,
+                generalMakeModel: generalMakeModel,
+                generalComments: generalComments,
+                technicianId: window.userId,
+                tires: [],
+                photoFiles: [] // Array para guardar las referencias de archivos para la subida
+            };
+
+            const positions = TIRES_STRUCTURE[vehicleType] || [];
+            let criticalFound = false;
+            let dataError = false;
+            
+            positions.forEach(position => {
+                const surco1 = parseFloat(form[`surco_${position}_1`].value);
+                const surco2 = parseFloat(form[`surco_${position}_2`].value);
+                const surco3 = parseFloat(form[`surco_${position}_3`].value);
+                const tireMakeModel = form[`tireMakeModel_${position}`].value || generalMakeModel;
+                const photoInput = form[`photo_${position}`];
+                const photoFile = photoInput && photoInput.files.length > 0 ? photoInput.files[0] : null;
+
+                if (isNaN(surco1) || isNaN(surco2) || isNaN(surco3)) {
+                    reviewMessages.push({ type: 'error', text: `Error en ${position}: Surcos incompletos o inválidos.` });
+                    dataError = true;
+                    return;
+                }
+
+                const surcos = [surco1, surco2, surco3];
+                const minSurco = Math.min(...surcos);
+                const maxSurco = Math.max(...surcos);
+
+                data.tires.push({
+                    position: position,
+                    description: getPositionDescription(position),
+                    makeModel: tireMakeModel,
+                    surco1: surco1,
+                    surco2: surco2,
+                    surco3: surco3,
+                    minSurco: minSurco,
+                    photoURL: 'N/A' // Placeholder
+                });
+                
+                if (photoFile) {
+                    data.photoFiles.push({
+                        file: photoFile,
+                        position: position
+                    });
+                }
+
+                // --- EVALUACIÓN TÉCNICA ---
+                
+                if (minSurco < 3.0) {
+                    reviewMessages.push({ 
+                        type: 'alert', 
+                        text: `⚠️ **¡ATENCIÓN!** Neumático ${position} tiene surco de ${minSurco.toFixed(1)} mm. Reemplazo inmediato obligatorio.` 
+                    });
+                    criticalFound = true;
+                } else if (minSurco < 5.0) {
+                    reviewMessages.push({ 
+                        type: 'warning', 
+                        text: `🟡 Neumático ${position} (${tireMakeModel}) con surco bajo (${minSurco.toFixed(1)} mm). Monitoreo semanal o reencauche/reemplazo pronto.` 
+                    });
+                }
+
+                const unevenness = maxSurco - minSurco;
+                if (unevenness > 2.0 && minSurco >= 3.0) {
+                    reviewMessages.push({ 
+                        type: 'warning', 
+                        text: `🚨 Desgaste Irregular en ${position} (Diferencia de ${unevenness.toFixed(1)} mm). Revisar Alineación y/o Suspensión.` 
+                    });
+                } else if (unevenness > 1.0 && minSurco >= 3.0) {
+                     reviewMessages.push({ 
+                        type: 'info', 
+                        text: `🔸 Variación notable en ${position}. Considerar verificar la presión de inflado.` 
+                    });
+                }
+            });
+            
+            if (dataError) {
+                 reviewMessages.push({ type: 'error', text: '🔴 **ERROR DE DATOS:** Por favor, corrige las entradas inválidas antes de continuar.' });
+            } else if (reviewMessages.length === 0) {
+                reviewMessages.push({ type: 'success', text: '✅ **Evaluación Exitosa.** Todos los neumáticos cumplen con los límites críticos. Listo para Guardar.' });
+            } else if (criticalFound) {
+                 reviewMessages.push({ type: 'alert', text: '🔴 **ACCIÓN REQUERIDA:** Se encontraron neumáticos en estado CRÍTICO. Proceder con el reemplazo antes de poner el vehículo en servicio.' });
+            }
+
+            pendingReviewData = data;
+            saveBtn.disabled = reviewMessages.some(m => m.type === 'error');
+            
+            btn.disabled = false;
+            btn.innerHTML = 'Evaluar Medición';
+            displayReview(reviewMessages);
+        }
+
+        /**
+         * Sube las fotos a Storage y luego guarda los datos y URLs en Firestore.
+         */
+        window.handleSave = async function() {
+            if (!pendingReviewData || pendingReviewData.tires.length === 0) {
+                window.displayMessage('Error: Debes realizar la evaluación primero.', 'error');
+                return;
+            }
+            if (!window.storage) {
+                window.displayMessage('Error: Firebase Storage no está disponible. No se puede guardar.', 'error');
+                return;
+            }
+
+            const saveBtn = document.getElementById('saveButton');
+            const reviewBtn = document.getElementById('reviewButton');
+            saveBtn.disabled = true;
+            reviewBtn.disabled = true;
+            saveBtn.innerHTML = '<svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Subiendo Fotos y Guardando...';
+
+            const { tires, photoFiles, ...recordData } = pendingReviewData;
+
+            try {
+                // 1. Subir Fotos a Firebase Storage
+                for (const photoItem of photoFiles) {
+                    const file = photoItem.file;
+                    const position = photoItem.position;
+                    const timestamp = new Date().getTime();
+                    const storagePath = `artifacts/${appId}/photos/${window.userId}/${p
