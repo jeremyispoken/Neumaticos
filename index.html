@@ -76,38 +76,44 @@
     window.currentRecords = [];
     window.pendingReviewData = null;
 
-    const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+    const appId = 'flota-track-app'; // Usamos un ID de app fijo para pruebas
     const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
-    // === INICIALIZACIÓN (CÓDIGO CORREGIDO Y MEJORADO) ===
+    // === INICIALIZACIÓN (SOLUCIÓN OPERATIVA) ===
     async function initializeAppCore() {
       setUiState('loading');
 
-      // 1. Validar la existencia de la configuración de Firebase.
-      if (typeof __firebase_config === 'undefined' || !__firebase_config) {
-        setUiState('error', 'Configuración de Firebase no encontrada.');
-        console.error("La variable global __firebase_config no está definida o está vacía.");
-        return;
-      }
+      // --- PASO CLAVE: INSERTA TU CONFIGURACIÓN DE FIREBASE AQUÍ ---
+        const firebaseConfig = {
+       apiKey: "AIzaSyBtc4KcGwNr4y79YeI4EdUX9mBSfindhH0",
+       authDomain: "neumaticos-fv.firebaseapp.com",
+       projectId: "neumaticos-fv",
+       storageBucket: "neumaticos-fv.firebasestorage.app",
+       messagingSenderId: "50061965881",
+       appId: "1:50061965881:web:31c43abfeabc0c0ed8ebe8",
+       measurementId: "G-LZVB5CT01W"  
+        }
+      const firebaseConfig = {
+        apiKey: "AIzaSy...REEMPLAZAR",
+        authDomain: "tu-proyecto.firebaseapp.com",
+        projectId: "tu-proyecto",
+        storageBucket: "tu-proyecto.appspot.com",
+        messagingSenderId: "1234567890",
+        appId: "1:12345:web:abcdef123"
+      };
 
-      // 2. Intentar parsear la configuración.
-      let firebaseConfig;
-      try {
-        firebaseConfig = JSON.parse(__firebase_config);
-      } catch (e) {
-        setUiState('error', 'Error al parsear la configuración de Firebase.');
-        console.error("Error al parsear __firebase_config:", e);
+      if (!firebaseConfig || firebaseConfig.apiKey === "AIzaSy...REEMPLAZAR") {
+        setUiState('error', 'Falta tu configuración de Firebase en el código.');
+        console.error("Debes rellenar el objeto 'firebaseConfig' en el archivo HTML para que la aplicación funcione.");
         return;
       }
       
-      // 3. Inicializar los servicios de Firebase.
       try {
         app = initializeApp(firebaseConfig);
         db = getFirestore(app);
         storage = getStorage(app);
         auth = getAuth(app);
 
-        // 4. Gestionar el estado de autenticación.
         onAuthStateChanged(auth, user => {
           if (user) {
             currentUserId = user.uid;
@@ -123,7 +129,6 @@
           }
         });
 
-        // 5. Intentar el inicio de sesión inicial.
         await attemptInitialSignIn();
 
       } catch (e) {
@@ -134,23 +139,17 @@
 
     async function attemptInitialSignIn() {
       try {
-        if (initialAuthToken) {
-          await signInWithCustomToken(auth, initialAuthToken);
-        } else {
-          await signInAnonymously(auth);
-        }
+        // Para pruebas en GitHub, siempre usaremos inicio de sesión anónimo.
+        await signInAnonymously(auth);
       } catch (error) {
         console.error("Fallo el intento de inicio de sesión:", error.code, error.message);
         let friendlyMessage = "Error de autenticación desconocido.";
         switch (error.code) {
-          case 'auth/invalid-custom-token':
-            friendlyMessage = "Token de autenticación inválido o expirado.";
-            break;
           case 'auth/network-request-failed':
             friendlyMessage = "Falla de red. Revisa tu conexión.";
             break;
           case 'auth/operation-not-allowed':
-            friendlyMessage = "Inicio de sesión anónimo no habilitado.";
+            friendlyMessage = "Habilita el inicio de sesión anónimo en Firebase.";
             break;
         }
         setUiState('error', friendlyMessage);
@@ -299,7 +298,6 @@
           const btn = document.getElementById(id);
           if(btn) btn.disabled = disableButtons;
       });
-      // La revisión solo se activa si hay un tipo de vehículo seleccionado
       if(state === 'authenticated' && document.getElementById('vehicleType')?.value) {
           document.getElementById('reviewButton').disabled = false;
       }
@@ -748,3 +746,4 @@
   </div>
 </body>
 </html>
+
