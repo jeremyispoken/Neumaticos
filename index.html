@@ -6,15 +6,76 @@
     <title>Registro de Surcos de Neumáticos</title>
     <!-- Carga de Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Estilos personalizados para el diseño móvil y la usabilidad */
+        html, body, #app-container {
+            min-height: 100vh;
+            margin: 0;
+            padding: 0;
+            font-family: 'Inter', sans-serif;
+            background-color: #F9F9fA; /* Tailwind Gray 50 */
+        }
+        .tab-button {
+            transition: all 0.2s;
+            padding-bottom: 8px;
+            font-weight: 600;
+            color: #4B5563; /* Tailwind Gray 600 */
+        }
+        .tab-button.active {
+            border-bottom: 4px solid #059669; /* Tailwind Emerald 600 */
+            color: #059669;
+        }
+        .form-control {
+            border-radius: 0.5rem;
+            border: 1px solid #D1D5DB; /* Tailwind Gray 300 */
+            padding: 0.5rem 0.75rem;
+            width: 100%;
+            transition: all 0.15s;
+        }
+        .form-control:focus {
+            border-color: #10B981; /* Tailwind Emerald 500 */
+            box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.4);
+            outline: none;
+        }
+        .tyre-group {
+            border: 1px solid #D1D5DB;
+            border-radius: 0.75rem;
+            padding: 1rem;
+            margin-bottom: 1.5rem;
+            background-color: white;
+            box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
+        }
+        .tyre-group-header {
+            font-size: 1.125rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+            color: #059669;
+        }
+        /* Estilos para el footer flotante de botones en móvil */
+        .sticky-footer {
+            position: sticky;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background-color: #ffffff;
+            padding: 1rem;
+            border-top: 1px solid #E5E7EB;
+            box-shadow: 0 -4px 6px -1px rgba(0, 0, 0, 0.1), 0 -2px 4px -2px rgba(0, 0, 0, 0.06);
+            z-index: 10;
+            display: flex;
+            gap: 0.75rem;
+            flex-direction: row; /* Asegura que los botones estén en línea */
+        }
+    </style>
     <script>
         tailwind.config = {
             theme: {
                 extend: {
                     colors: {
                         'primary': '#059669', // Emerald 600
-                        'secondary': '#10b981', // Emerald 500
-                        'accent': '#fbbf24', // Amber 400
-                        'background': '#f9fafb', // Gray 50
+                        'secondary': '#10B981', // Emerald 500
+                        'accent': '#F59E0B', // Amber 500
+                        'background': '#F9F9fA', // Gray 50
                     },
                     fontFamily: {
                         sans: ['Inter', 'sans-serif'],
@@ -23,51 +84,270 @@
             }
         }
     </script>
-    <style>
-        html, body { height: 100%; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
-        #app-container { min-height: 100vh; }
-        .tab-button { transition: all 0.2s; }
-        .tab-button.active {
-            border-bottom: 4px solid #059669;
-            font-weight: 600;
-            color: #059669;
-        }
-        .form-control {
-            border-radius: 0.5rem;
-            border: 1px solid #d1d5db;
-            padding: 0.5rem 0.75rem;
-            width: 100%;
-            transition: all 0.15s;
-        }
-        .form-control:focus {
-            border-color: #059669;
-            box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.5);
-            outline: none;
-        }
-    </style>
-    <!-- Carga de Firebase SDKs y Lógica de la Aplicación (Módulo JS) -->
+</head>
+<body class="bg-background">
+    <div id="app-container" class="max-w-4xl mx-auto pt-4 pb-20 p-4">
+        <header class="mb-6">
+            <h1 class="text-3xl font-bold text-center text-primary">Gestión de Neumáticos</h1>
+            <p class="text-center text-gray-500">Registro de surcos de flota vehicular.</p>
+        </header>
+
+        <!-- Navegación de Pestañas -->
+        <nav class="flex justify-around border-b border-gray-200 mb-6">
+            <button id="tab-guide" data-tab="guide" class="tab-button active flex-1">Guía & Tips</button>
+            <button id="tab-register" data-tab="register" class="tab-button flex-1">Registrar</button>
+            <button id="tab-history" data-tab="history" class="tab-button flex-1">Historial</button>
+        </nav>
+
+        <!-- Contenedores de Pestañas -->
+        <div id="content-guide" class="tab-content">
+            <div class="p-4 bg-white rounded-xl shadow-lg mb-6">
+                <h2 class="text-xl font-bold text-primary mb-3">Guía de Uso Rápido</h2>
+                <p class="text-gray-700 mb-4">Esta aplicación permite registrar las mediciones de surcos de neumáticos de su flota, ayudando a monitorear su desgaste y planificar el mantenimiento preventivo.</p>
+
+                <h3 class="font-semibold text-gray-800 mb-2">1. Configuración Inicial</h3>
+                <ul class="list-disc list-inside text-sm text-gray-600 ml-4 mb-4">
+                    <li>Los datos se guardan automáticamente en su proyecto privado de **Firebase Firestore** y las fotos en **Firebase Storage**.</li>
+                    <li>Las mediciones se inician siempre por la **Posición I1** (Tren delantero, posición del conductor).</li>
+                </ul>
+
+                <h3 class="font-semibold text-gray-800 mb-2">2. Proceso de Registro</h3>
+                <ol class="list-decimal list-inside text-sm text-gray-600 ml-4 mb-4">
+                    <li>Complete los datos generales (N° Orden, Kilometraje, Fecha, Vehículo).</li>
+                    <li>Seleccione la **Marca/Modelo** y la **Medida** general del neumático.</li>
+                    <li>Complete los 3 surcos (1, 2, 3) para cada neumático.</li>
+                    <li>Si lo requiere, adjunte una foto por rueda (resolución 640x480 recomendada).</li>
+                    <li>Presione **"Evaluar Medición"** para obtener comentarios técnicos automáticos.</li>
+                    <li>Presione **"Guardar Registro"** para confirmar la subida de datos y fotos a la nube.</li>
+                </ol>
+            </div>
+
+            <div class="p-4 bg-white rounded-xl shadow-lg mb-6">
+                <h2 class="text-xl font-bold text-primary mb-3">Recomendaciones de Medición</h2>
+                <ul class="text-sm text-gray-700 space-y-3">
+                    <li class="p-2 border-l-4 border-accent bg-yellow-50 rounded-r-md">
+                        <span class="font-bold">Herramienta Calibrada:</span> Utilice un profundímetro digital o de aguja que haya sido calibrado recientemente para asegurar la máxima precisión ($ \pm 0.1\text{ mm} $).
+                    </li>
+                    <li class="p-2 border-l-4 border-accent bg-yellow-50 rounded-r-md">
+                        <span class="font-bold">Puntos de Medición:</span> Mida los 3 surcos (interior, medio, exterior) en la parte más profunda de la banda de rodadura y evite medir sobre los testigos de desgaste.
+                    </li>
+                    <li class="p-2 border-l-4 border-accent bg-yellow-50 rounded-r-md">
+                        <span class="font-bold">Condiciones Limpias:</span> La banda de rodadura debe estar libre de piedras, barro o suciedad para que la aguja del profundímetro asiente correctamente.
+                    </li>
+                    <li class="p-2 border-l-4 border-accent bg-yellow-50 rounded-r-md">
+                        <span class="font-bold">Evaluación:</span> Si la diferencia entre los 3 surcos es mayor a $2.0\text{ mm}$, el sistema sugerirá revisar la alineación o presión.
+                    </li>
+                </ul>
+            </div>
+
+            <div class="p-4 bg-white rounded-xl shadow-lg">
+                <h2 class="text-xl font-bold text-primary mb-3">Consejo para Mayor Vida Útil</h2>
+                <div id="random-tip" class="text-base text-gray-700 italic border-l-4 border-secondary pl-3">
+                    <!-- Tip se carga aquí -->
+                </div>
+            </div>
+        </div>
+
+        <div id="content-register" class="tab-content hidden">
+            <form id="tyre-registration-form">
+                <!-- Sección de Datos Generales -->
+                <div class="p-4 bg-white rounded-xl shadow-lg mb-6">
+                    <h2 class="text-xl font-bold text-secondary mb-4">Datos Generales</h2>
+                    <div class="space-y-4">
+                        <!-- N° Orden -->
+                        <div>
+                            <label for="order-number" class="block text-sm font-medium text-gray-700">Número de Orden</label>
+                            <input type="text" id="order-number" required class="form-control" placeholder="Ej: 2024-001">
+                        </div>
+                        <!-- Kilometraje -->
+                        <div>
+                            <label for="mileage" class="block text-sm font-medium text-gray-700">Kilometraje (km)</label>
+                            <input type="number" id="mileage" required class="form-control" placeholder="Ej: 150000">
+                        </div>
+                        <!-- Fecha -->
+                        <div>
+                            <label for="date" class="block text-sm font-medium text-gray-700">Fecha de Medición</label>
+                            <input type="date" id="date" required class="form-control" value="">
+                        </div>
+                        <!-- Tipo de Vehículo -->
+                        <div>
+                            <label for="vehicle-type" class="block text-sm font-medium text-gray-700">Tipo de Vehículo</label>
+                            <select id="vehicle-type" required class="form-control">
+                                <option value="">Seleccione...</option>
+                                <option value="Bus">Bus (6 + Repuesto)</option>
+                                <option value="Taxibus">Taxibus (6 + Repuesto)</option>
+                                <option value="Minibús">Minibús (4 + Repuesto)</option>
+                                <option value="Minibús DR">Minibús DR (6 + Repuesto)</option>
+                                <option value="Camioneta">Camioneta (4 + Repuesto)</option>
+                            </select>
+                        </div>
+                        <!-- Marca y Modelo General -->
+                        <div>
+                            <label for="general-model" class="block text-sm font-medium text-gray-700">Marca y Modelo (General)</label>
+                            <input type="text" id="general-model" required class="form-control" placeholder="Ej: Michelin X Multi Z" list="model-suggestions">
+                            <datalist id="model-suggestions">
+                                <!-- Opciones de autocompletado se añaden con JS -->
+                            </datalist>
+                        </div>
+                         <!-- Medida de Neumático General -->
+                        <div>
+                            <label for="general-size" class="block text-sm font-medium text-gray-700">Medida del Neumático (General)</label>
+                            <select id="general-size" required class="form-control">
+                                <option value="">Seleccione medida...</option>
+                            </select>
+                        </div>
+                        <!-- Comentarios Generales -->
+                        <div>
+                            <label for="general-comments" class="block text-sm font-medium text-gray-700">Comentarios Generales (Máx 100 caracteres)</label>
+                            <textarea id="general-comments" maxlength="100" class="form-control resize-none h-16" placeholder="Condiciones del clima, observación general..."></textarea>
+                            <span id="comment-char-count" class="text-xs text-gray-500 float-right">0/100</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Contenedor Dinámico de Neumáticos -->
+                <div id="tyre-container">
+                    <!-- Secciones de neumáticos se generan aquí -->
+                </div>
+
+                <!-- Contenedor de Comentarios Técnicos y Botón de Evaluación -->
+                <div id="evaluation-results-container" class="p-4 bg-white rounded-xl shadow-lg hidden mb-6">
+                    <h2 class="text-xl font-bold text-accent mb-3">Comentarios Técnicos de Evaluación</h2>
+                    <div id="evaluation-output" class="text-sm text-gray-700 space-y-2">
+                        <!-- Resultados de la evaluación se insertan aquí -->
+                    </div>
+                    <div id="critical-alert" class="hidden mt-4 p-3 bg-red-100 text-red-700 border border-red-400 rounded-lg font-bold">
+                        🚨 ALERTA CRÍTICA: Se requiere el reemplazo inmediato de neumáticos.
+                    </div>
+                </div>
+
+                <!-- Mensaje de Estado (Éxito o Error) -->
+                <div id="status-message" class="hidden p-3 rounded-lg text-center font-semibold mb-4"></div>
+            </form>
+
+             <!-- Footer Flotante de Botones -->
+            <div class="sticky-footer">
+                <button type="button" id="evaluate-button" class="flex-1 w-1/2 bg-accent hover:bg-yellow-600 text-white font-bold py-3 px-4 rounded-lg shadow-md transition duration-150" disabled>
+                    Evaluar Medición
+                </button>
+                <button type="button" id="save-button" class="flex-1 w-1/2 bg-primary hover:bg-green-700 text-white font-bold py-3 px-4 rounded-lg shadow-md transition duration-150" disabled>
+                    Guardar Registro
+                </button>
+            </div>
+        </div>
+
+        <div id="content-history" class="tab-content hidden">
+            <div class="p-4 bg-white rounded-xl shadow-lg mb-6">
+                <h2 class="text-xl font-bold text-secondary mb-4">Registros Históricos</h2>
+                <button id="export-csv-button" class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg transition duration-150 mb-4">
+                    Exportar a Excel (CSV)
+                </button>
+                <div id="loading-history" class="text-center text-gray-500 hidden">Cargando historial...</div>
+                <div id="history-list" class="space-y-4">
+                    <!-- Registros se cargan aquí -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Script de Firebase y Lógica de la Aplicación -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, addDoc, onSnapshot, collection, query, serverTimestamp, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-        // IMPORTANTE: Nuevo import para Firebase Storage
+        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, onSnapshot, query, orderBy } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-storage.js";
 
-        setLogLevel('debug');
+        // === CONFIGURACIÓN DE FIREBASE DEL USUARIO (Insertada) ===
+        // ESTA ES LA CONFIGURACIÓN PROPORCIONADA POR EL USUARIO
+        const YOUR_FIREBASE_CONFIG = {
+            apiKey: "AIzaSyBtc4KcGwNr4y79YeI4EdUX9mBSfindhH0",
+            authDomain: "neumaticos-fv.firebaseapp.com",
+            projectId: "neumaticos-fv",
+            storageBucket: "neumaticos-fv.appspot.com", // Modificado a .appspot.com, que es el formato de StorageBucket
+            messagingSenderId: "50061965881",
+            appId: "1:50061965881:web:31c43abfeabc0c0ed8ebe8"
+        };
+        
+        // --- INICIALIZACIÓN DE FIREBASE ---
+        let app, db, auth, storage, userId;
 
-        // --- CONSTANTES Y VARIABLES GLOBALES (Accedidas a través de window.) ---
+        try {
+            app = initializeApp(YOUR_FIREBASE_CONFIG);
+            db = getFirestore(app);
+            auth = getAuth(app);
+            storage = getStorage(app);
+        
+            // Autenticación anónima para obtener un userId
+            signInAnonymously(auth).then((userCredential) => {
+                userId = userCredential.user.uid;
+                console.log("Usuario autenticado anónimamente. ID:", userId);
+                // Habilitar el botón de evaluar una vez que el usuario esté listo
+                document.getElementById('evaluate-button').disabled = false;
+                loadHistory(); // Cargar historial solo después de la autenticación
+            }).catch((error) => {
+                console.error("Error al autenticar:", error);
+                document.getElementById('status-message').className = 'p-3 rounded-lg text-center font-semibold bg-red-100 text-red-800 mb-4';
+                document.getElementById('status-message').innerText = 'Error al conectar con la autenticación de Firebase.';
+                document.getElementById('status-message').style.display = 'block';
+            });
+        
+        } catch (error) {
+            console.error("Error al inicializar Firebase:", error);
+            document.getElementById('status-message').className = 'p-3 rounded-lg text-center font-semibold bg-red-100 text-red-800 mb-4';
+            document.getElementById('status-message').innerText = 'Error crítico: La configuración de Firebase es incorrecta o faltan servicios.';
+            document.getElementById('status-message').style.display = 'block';
+        }
 
-        window.app = null;
-        window.db = null;
-        window.auth = null;
-        window.storage = null; // Instancia de Firebase Storage
-        window.userId = null;
-        window.isAuthReady = false;
-        let currentRecords = [];
-        let pendingReviewData = null; // Almacena los datos revisados temporalmente (incluye archivos de fotos)
 
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+        // Constantes y Datos
+        const APP_ID = 'neumaticos_app_v2'; // ID fijo para el path de Firestore
+
+        const TYRE_POSITIONS = {
+            'Bus': ['I1 (Delantera Izq.)', 'D1 (Delantera Der.)', 'I2 (Trasera Ext. Izq.)', 'D2 (Trasera Ext. Der.)', 'I3 (Trasera Int. Izq.)', 'D3 (Trasera Int. Der.)', 'Repuesto'],
+            'Taxibus': ['I1 (Delantera Izq.)', 'D1 (Delantera Der.)', 'I2 (Trasera Ext. Izq.)', 'D2 (Trasera Ext. Der.)', 'I3 (Trasera Int. Izq.)', 'D3 (Trasera Int. Der.)', 'Repuesto'],
+            'Minibús': ['I1 (Delantera Izq.)', 'D1 (Delantera Der.)', 'I2 (Trasera Izq.)', 'D2 (Trasera Der.)', 'Repuesto'],
+            'Minibús DR': ['I1 (Delantera Izq.)', 'D1 (Delantera Der.)', 'I2 (Trasera Ext. Izq.)', 'D2 (Trasera Ext. Der.)', 'I3 (Trasera Int. Izq.)', 'D3 (Trasera Int. Der.)', 'Repuesto'],
+            'Camioneta': ['I1 (Delantera Izq.)', 'D1 (Delantera Der.)', 'I2 (Trasera Izq.)', 'D2 (Trasera Der.)', 'Repuesto'],
+        };
+        
+        const MODEL_SUGGESTIONS = [
+            "Michelin X Multi Z", "Goodyear KMAX S", "Bridgestone R268", "Pirelli FH:01", "Continental Conti Hybrid HS3"
+        ];
+        
+        const SIZE_SUGGESTIONS = [
+            "295/80R22.5", "275/70R22.5", "255/70R22.5", "215/75R17.5", "235/75R17.5", "195/60R15", "265/70R16", "245/75R16"
+        ];
+        
+        const TIPS = [
+            "Asegúrate de que la presión de inflado sea la recomendada por el fabricante del vehículo. La subinflación es la principal causa de desgaste prematuro.",
+            "Realiza la rotación de los neumáticos cada 10,000 km a 12,000 km, según el patrón de desgaste, para uniformizar la vida útil.",
+            "Verifica la alineación de la dirección y el balanceo cada vez que se detecte un desgaste irregular o después de un impacto fuerte.",
+            "Lleva un control de la profundidad de surco regularmente (cada 5,000 km) para identificar a tiempo problemas de suspensión o presión."
+        ];
+        
+        // --- Elementos DOM ---
+        const tyreContainer = document.getElementById('tyre-container');
+        const vehicleTypeSelect = document.getElementById('vehicle-type');
+        const modelDatalist = document.getElementById('model-suggestions');
+        const generalSizeSelect = document.getElementById('general-size');
+        const commentInput = document.getElementById('general-comments');
+        const charCountSpan = document.getElementById('comment-char-count');
+        const evaluateBtn = document.getElementById('evaluate-button');
+        const saveBtn = document.getElementById('save-button');
+        const statusMsg = document.getElementById('status-message');
+        const evaluationContainer = document.getElementById('evaluation-results-container');
+        const evaluationOutput = document.getElementById('evaluation-output');
+        const criticalAlert = document.getElementById('critical-alert');
+
+
+        // --- Funciones de Utilidad ---
+
+        // Función para generar un ID único
+        const generateUniqueId = () => `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+
+        // Generación de campos de Neumáticos
+        const generateTyreSection = (position, index) => {
+            const safePositionId = position.replace(/        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
         const TIRES_STRUCTURE = {
