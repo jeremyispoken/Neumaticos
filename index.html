@@ -1,661 +1,1295 @@
+Gemini
+
+2.5 Pro
+
+Conversación con Gemini
+
+
+MEJORA EL ERROR PARA AUTENTIFICAR EN FIREBASE
+
+
+
 <!DOCTYPE html>
+
 <html lang="es">
+
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Flota TRACK - Registro de Surcos</title>
 
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          colors: {
-            primary: "#059669",
-            secondary: "#10b981",
-            accent: "#fbbf24",
-            background: "#f9fafb",
-          },
-          fontFamily: { sans: ["Inter", "sans-serif"] },
-        },
-      },
-    };
-  </script>
-  <style>
-    /* Estilos generales y de componentes. Sin cambios visuales. */
-    html, body { height: 100%; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
-    #app-container { min-height: 100vh; }
-    .tab-button { transition: all 0.2s; }
-    .tab-button.active { border-bottom: 4px solid #059669; font-weight: 600; color: #059669; }
-    .form-control { border-radius: 0.5rem; border: 1px solid #d1d5db; padding: 0.5rem 0.75rem; width: 100%; transition: all 0.15s; }
-    .form-control:focus { border-color: #059669; box-shadow: 0 0 0 3px rgba(5,150,105,0.5); outline: none; }
-    /* Estilo para botones deshabilitados para mejor feedback visual */
-    button:disabled, select:disabled { cursor: not-allowed; opacity: 0.6; }
-  </style>
+  <meta charset="UTF-8" />
 
-  <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-    import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-    import { getFirestore, addDoc, onSnapshot, collection, query, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-    import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-storage.js";
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-    // Se envuelve toda la lógica en un listener que espera a que el DOM esté listo.
-    // Esto es una mejor práctica que window.onload.
-    document.addEventListener('DOMContentLoaded', () => {
+  <title>Flota TRACK - Registro de Surcos</title>
 
-      // === CONSTANTES Y CONFIGURACIÓN ===
-      // Se agrupan todas las constantes para una mejor organización.
-      const GEMINI_MODEL = "gemini-1.5-flash-preview-0514";
-      const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
-      const BRANCHES = ["Copiapó", "Vallenar", "Santiago", "Viña del Mar", "Casa Matriz"];
-      const TIRES_STRUCTURE = {
-        'Bus': ['I1', 'D1', 'I2', 'D2', 'I3', 'D3', 'Repuesto'],
-        'Taxibus': ['I1', 'D1', 'I2', 'D2', 'I3', 'D3', 'Repuesto'],
-        'Minibús': ['I1', 'D1', 'I2', 'D2', 'Repuesto'],
-        'Minibús DR (Doble Rodado)': ['I1', 'D1', 'I2', 'D2', 'I3', 'D3', 'Repuesto'],
-        'Camioneta': ['I1', 'D1', 'I2', 'D2', 'Repuesto'],
-      };
-      const PREDEFINED_MODELS = [
-        'Michelin X Multiway 3D XZE', 'Pirelli FH:01 Energy', 'Bridgestone R260', 'Dunlop SP338', 'Goodyear KMAX S', 'Continental HT3', 'Hankook SmartFlex AH31', 'Westlake CB867', 'Sailun S701'
-      ];
-      const PREDEFINED_SIZES = ['225/75R16', '245/70R19.5', '275/80R22.5', '295/80R22.5', '315/80R22.5', '11R22.5', '12R22.5', '10.00R20'];
-      const LONGEVITY_TIPS = [
-        "Mantén la <strong>presión correcta</strong> semanalmente. La subinflación es el principal asesino de neumáticos.",
-        "Realiza la <strong>rotación</strong> cada 10–12 mil km para asegurar un desgaste uniforme.",
-        "Alinea si notas desgaste irregular o tras golpes fuertes.",
-        "Balancea al montar o tras reparaciones para evitar vibraciones.",
-        "Inspecciona cortes, protuberancias y objetos incrustados.",
-        "Conduce suave: evita frenazos y acelerones.",
-        "Revisa suspensión/amortiguadores: influyen en el desgaste.",
-        "Limpia neumáticos y llantas con regularidad.",
-      ];
 
-      // === ESTADO DE LA APLICACIÓN ===
-      // Se centraliza el estado en un solo objeto para evitar variables globales sueltas.
-      const appState = {
-        db: null,
-        auth: null,
-        storage: null,
-        currentUserId: null,
-        authReady: false,
-        currentRecords: [],
-        pendingReviewData: null,
-        unsubscribeFromRecords: null, // Para manejar el listener de Firestore
-      };
 
-      // === REFERENCIAS AL DOM ===
-      // Se cachean los elementos del DOM que se usan frecuentemente para mejorar el rendimiento.
-      const DOMElements = {
-        // Pestañas y contenido
-        tabs: document.querySelectorAll('.tab-button'),
-        tabContents: document.querySelectorAll('.tab-content'),
-        // Header
-        userIdDisplay: document.getElementById('userIdDisplay'),
-        firebaseErrorDisplay: document.getElementById('firebaseErrorDisplay'),
-        // Formulario
-        registrationForm: document.getElementById('registrationForm'),
-        vehicleTypeSelect: document.getElementById('vehicleType'),
-        tireInputsContainer: document.getElementById('tireInputsContainer'),
-        reviewButton: document.getElementById('reviewButton'),
-        saveButton: document.getElementById('saveButton'),
-        reviewFeedback: document.getElementById('reviewFeedback'),
-        dateInput: document.getElementById('date'),
-        makeModelSelect: document.getElementById('makeModel'),
-        tireSizeSelect: document.getElementById('tireSize'),
-        branchSelect: document.getElementById('branchName'),
-        // Historial
-        recordsTableBody: document.getElementById('recordsTableBody'),
-        exportCsvButton: document.getElementById('exportCsvButton'),
-        // Otros
-        randomTip: document.getElementById('randomTip'),
-        appMessage: document.getElementById('appMessage'),
-      };
+  <!-- Tailwind CSS -->
 
-      // === LÓGICA DE INICIALIZACIÓN ===
+  <script src="https://cdn.tailwindcss.com"></script>
 
-      /**
-       * Inicializa la aplicación: conecta con Firebase, autentica al usuario y carga los datos.
-       */
-      async function main() {
-        setupEventListeners();
-        DOMElements.dateInput.value = new Date().toISOString().slice(0, 10);
-        await initializeFirebase();
-        populateSelects();
-        switchTab('guide');
-      }
+  <script>
 
-      /**
-       * Conecta con Firebase, inicializa los servicios y autentica al usuario.
-       */
-      async function initializeFirebase() {
-        setFormButtonsDisabled(true);
-        const apiKey = typeof __gemini_key !== 'undefined' ? __gemini_key : "";
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-        
-        let firebaseConfig = null;
-        try {
-          if (typeof __firebase_config !== 'undefined') {
-            firebaseConfig = JSON.parse(__firebase_config);
-          }
-        } catch (e) {
-          console.error("Error al parsear __firebase_config:", e);
-        }
+    tailwind.config = {
 
-        if (!firebaseConfig) {
-          DOMElements.firebaseErrorDisplay.textContent = 'ERROR: Configuración de Firebase faltante.';
-          DOMElements.userIdDisplay.textContent = 'ERROR';
-          return;
-        }
+      theme: {
 
-        try {
-          const app = initializeApp(firebaseConfig);
-          appState.db = getFirestore(app);
-          appState.storage = getStorage(app);
-          appState.auth = getAuth(app);
+        extend: {
 
-          const authResult = await (initialAuthToken ? signInWithCustomToken(appState.auth, initialAuthToken) : signInAnonymously(appState.auth));
-          appState.currentUserId = authResult.user.uid;
-          
-          appState.authReady = true;
-          DOMElements.userIdDisplay.textContent = `ID Técnico: ${appState.currentUserId.substring(0, 8)}...`;
-          setFormButtonsDisabled(false);
-          
-          loadRecords(appId);
-        } catch (e) {
-          console.error("Error de inicialización de Firebase:", e);
-          displayMessage('Error de inicialización. Revisa la consola.', 'error');
-          DOMElements.userIdDisplay.textContent = 'ID Técnico: Falló la autenticación';
-          setFormButtonsDisabled(true);
-        }
-      }
+          colors: {
 
-      /**
-       * Carga las opciones en los menús desplegables del formulario.
-       */
-      function populateSelects() {
-        PREDEFINED_MODELS.forEach(m => DOMElements.makeModelSelect.insertAdjacentHTML('beforeend', `<option value="${m}">${m}</option>`));
-        PREDEFINED_SIZES.forEach(s => DOMElements.tireSizeSelect.insertAdjacentHTML('beforeend', `<option value="${s}">${s}</option>`));
-        BRANCHES.forEach(b => DOMElements.branchSelect.insertAdjacentHTML('beforeend', `<option value="${b}">${b}</option>`));
-      }
+            primary: "#059669",
 
-      // === MANEJO DE EVENTOS ===
+            secondary: "#10b981",
 
-      /**
-       * Centraliza la asignación de todos los event listeners de la aplicación.
-       */
-      function setupEventListeners() {
-        DOMElements.tabs.forEach(tab => {
-          tab.addEventListener('click', () => switchTab(tab.dataset.tab));
-        });
-        DOMElements.vehicleTypeSelect.addEventListener('change', generateTireInputs);
-        DOMElements.registrationForm.addEventListener('submit', handleReview);
-        DOMElements.saveButton.addEventListener('click', handleSave);
-        DOMElements.exportCsvButton.addEventListener('click', exportToCsv);
+            accent: "#fbbf24",
 
-        // Uso de delegación de eventos para los botones de la tabla.
-        // Es más eficiente que agregar un listener a cada botón.
-        DOMElements.recordsTableBody.addEventListener('click', (event) => {
-            const analyzeButton = event.target.closest('.analyze-btn');
-            if (analyzeButton) {
-                const recordId = analyzeButton.dataset.recordId;
-                analyzeRecord(recordId);
-            }
-        });
-      }
+            background: "#f9fafb",
 
-      // === LÓGICA DE PESTAÑAS Y UI ===
+          },
 
-      /**
-       * Cambia la visibilidad entre las pestañas de la aplicación.
-       * @param {string} tabName - El nombre de la pestaña a activar ('guide', 'register', 'records').
-       */
-      function switchTab(tabName) {
-        DOMElements.tabs.forEach(tab => tab.classList.toggle('active', tab.dataset.tab === tabName));
-        DOMElements.tabContents.forEach(content => content.classList.toggle('hidden', content.id !== `tab-content-${tabName}`));
+          fontFamily: { sans: ["Inter", "sans-serif"] },
 
-        if (tabName === 'guide') updateRandomRecommendation();
-        if (tabName === 'register') resetRegistrationForm();
-      }
-      
-      /**
-       * Reinicia el formulario de registro a su estado inicial.
-       */
-      function resetRegistrationForm() {
-        DOMElements.reviewFeedback.innerHTML = '';
-        DOMElements.saveButton.disabled = true;
-        DOMElements.registrationForm.reset();
-        DOMElements.tireInputsContainer.innerHTML = '';
-        DOMElements.dateInput.value = new Date().toISOString().slice(0, 10);
-        setFormButtonsDisabled(!appState.authReady);
-      }
+        },
 
-      /**
-       * Genera dinámicamente los campos de entrada para cada neumático según el tipo de vehículo.
-       */
-      function generateTireInputs() {
-        const vehicleType = DOMElements.vehicleTypeSelect.value;
-        DOMElements.tireInputsContainer.innerHTML = '';
-        const positions = TIRES_STRUCTURE[vehicleType] || [];
+      },
 
-        const inputHTML = positions.map((position, index) => {
-          const positionDesc = getPositionDescription(position);
-          return `
-            <div class="p-4 border border-gray-200 rounded-xl shadow-sm mb-4 bg-white">
-              <h4 class="text-lg font-semibold text-primary mb-3">Neumático - Posición ${index + 1} (${position})</h4>
-              <p class="text-sm text-gray-500 mb-4">${positionDesc}</p>
-              <div class="mb-4">
-                <label class="block text-xs font-medium text-gray-700 mb-1" for="tireMakeModel-${index}">Marca y Modelo (Específico)</label>
-                <select id="tireMakeModel-${index}" name="tireMakeModel_${position}" class="form-control text-sm">
-                  <option value="" selected>Usar marca general del formulario</option>
-                  ${PREDEFINED_MODELS.map(m => `<option value="${m}">${m}</option>`).join('')}
-                </select>
-              </div>
-              <div class="grid grid-cols-3 gap-2 mb-4">
-                ${[1, 2, 3].map(i => `
-                  <div>
-                    <label class="block text-xs font-medium text-gray-700 mb-1" for="surco-${index}-${i}">Surco ${i} (mm)</label>
-                    <input type="number" id="surco-${index}-${i}" name="surco_${position}_${i}" min="0" max="25" step="0.1" class="form-control text-sm" placeholder="Ej: 5.5" required />
-                  </div>`).join('')}
-              </div>
-              <div>
-                <label class="block text-xs font-medium text-gray-700 mb-1" for="photo-${index}">Foto (menor surco – opcional)</label>
-                <input type="file" id="photo-${index}" name="photo_${position}" accept="image/jpeg,image/png" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-secondary/10 file:text-secondary hover:file:bg-secondary/20" />
-                <p class="text-xs text-gray-400 mt-1">Se guarda en Firebase Storage.</p>
-              </div>
-            </div>`;
-        }).join('');
+    };
 
-        DOMElements.tireInputsContainer.innerHTML = inputHTML;
-        DOMElements.reviewButton.disabled = positions.length === 0 || !appState.authReady;
-      }
-      
-      /**
-       * Muestra los registros en la tabla del historial.
-       * @param {Array} records - Un array de objetos de registro.
-       */
-      function displayRecords(records) {
-        const container = DOMElements.recordsTableBody;
-        if (!records.length) {
-          container.innerHTML = '<tr><td colspan="7" class="text-center py-4 text-gray-500">No hay registros disponibles.</td></tr>';
-          return;
-        }
-        
-        const recordsHTML = records.map(record => {
-          const dateStr = record.date ? new Date(record.date).toLocaleDateString('es-CL') : '-';
-          const minSurco = (record.tires || []).reduce((min, t) => Math.min(min, t.surco1, t.surco2, t.surco3), 99);
-          const criticalClass = minSurco < 3.0 ? 'bg-red-100 text-red-800 font-bold' : (minSurco < 5.0 ? 'bg-yellow-100 text-yellow-800' : 'text-gray-700');
-          const branch = record.branchName || 'N/A';
-          
-          return `
-            <tr class="border-b hover:bg-gray-50 transition">
-              <td class="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">${record.orderNumber}</td>
-              <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-600 font-semibold">${branch}</td>
-              <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${record.vehicleType}</td>
-              <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${(record.mileage || 0).toLocaleString('es-CL')} km</td>
-              <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${dateStr}</td>
-              <td class="px-4 py-3 whitespace-nowrap text-sm ${criticalClass}">${Number.isFinite(minSurco) ? minSurco.toFixed(1) : '-'} mm</td>
-              <td class="px-4 py-3 whitespace-nowrap text-right text-sm font-medium">
-                <button data-record-id="${record.id}" class="analyze-btn text-primary hover:text-secondary p-2 rounded-full transition flex items-center">
-                  <span class="text-lg mr-1">✨</span> Analizar
-                </button>
-              </td>
-            </tr>`;
-        }).join('');
-        container.innerHTML = recordsHTML;
-      }
+  </script>
 
-      // === LÓGICA DE DATOS Y FORMULARIO ===
+  <style>
 
-      /**
-       * Carga los registros desde Firestore y los muestra en la tabla.
-       * @param {string} appId - El ID de la aplicación para la ruta de Firestore.
-       */
-      function loadRecords(appId) {
-        if (!appState.db || !appState.authReady) return;
-        if (typeof appState.unsubscribeFromRecords === 'function') appState.unsubscribeFromRecords();
+    html, body { height: 100%; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
 
-        const recordsRef = collection(appState.db, `/artifacts/${appId}/public/data/tire_records`);
-        const q = query(recordsRef);
+    #app-container { min-height: 100vh; }
 
-        appState.unsubscribeFromRecords = onSnapshot(q, (snapshot) => {
-          const records = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-          appState.currentRecords = records.sort((a, b) => (b.orderNumber || 0) - (a.orderNumber || 0));
-          displayRecords(appState.currentRecords);
-        }, (err) => console.error("Error al escuchar cambios en los registros:", err));
-      }
+    .tab-button { transition: all 0.2s; }
 
-      /**
-       * Valida los datos del formulario y muestra una pre-evaluación.
-       * @param {Event} event - El evento de submit del formulario.
-       */
-      function handleReview(event) {
-        event.preventDefault();
-        if (!appState.authReady) {
-          displayReview([{ type: 'error', text: 'Base de datos no lista. Espera a que el ID Técnico aparezca.' }]);
-          return;
-        }
+    .tab-button.active { border-bottom: 4px solid #059669; font-weight: 600; color: #059669; }
 
-        const form = DOMElements.registrationForm;
-        const formData = new FormData(form);
-        
-        setReviewButtonState(true, 'Evaluando...');
-        DOMElements.saveButton.disabled = true;
-        DOMElements.reviewFeedback.innerHTML = '';
-        appState.pendingReviewData = null;
-        
-        const data = {
-          orderNumber: parseInt(formData.get('orderNumber')),
-          mileage: parseInt(formData.get('mileage')),
-          date: formData.get('date'),
-          tireSize: formData.get('tireSize'),
-          vehicleType: formData.get('vehicleType'),
-          generalMakeModel: formData.get('makeModel'),
-          generalComments: formData.get('generalComments') || '',
-          technicianId: appState.currentUserId,
-          branchName: formData.get('branchName'),
-          tires: [],
-          photoFiles: [],
-        };
+    .form-control { border-radius: 0.5rem; border: 1px solid #d1d5db; padding: 0.5rem 0.75rem; width: 100%; transition: all 0.15s; }
 
-        const reviewMessages = [];
-        if (isNaN(data.orderNumber) || isNaN(data.mileage) || !data.date || !data.generalMakeModel || !data.tireSize || !data.branchName) {
-          reviewMessages.push({ type: 'error', text: 'Completa Sucursal, Nro de orden, Kilometraje, Fecha, Medida y Marca/Modelo general.' });
-          finishReview(reviewMessages);
-          return;
-        }
+    .form-control:focus { border-color: #059669; box-shadow: 0 0 0 3px rgba(5,150,105,0.5); outline: none; }
 
-        const positions = TIRES_STRUCTURE[data.vehicleType] || [];
-        let dataError = false;
+  </style>
 
-        positions.forEach(position => {
-          if (dataError) return;
-          
-          const s1 = parseFloat(form[`surco_${position}_1`]?.value);
-          const s2 = parseFloat(form[`surco_${position}_2`]?.value);
-          const s3 = parseFloat(form[`surco_${position}_3`]?.value);
-          const tireMakeModel = form[`tireMakeModel_${position}`]?.value || data.generalMakeModel;
-          const photoInput = form[`photo_${position}`];
-          const photoFile = (photoInput?.files.length) ? photoInput.files[0] : null;
 
-          if ([s1, s2, s3].some(v => isNaN(v))) {
-            reviewMessages.push({ type: 'error', text: `Error en ${position}: surcos incompletos/inválidos.` });
-            dataError = true;
-            return;
-          }
-          if ([s1, s2, s3].some(v => v < 0 || v > 25)) {
-            reviewMessages.push({ type: 'error', text: `Error en ${position}: surco fuera de rango (0–25 mm).` });
-            dataError = true;
-            return;
-          }
-          
-          const minSurco = Math.min(s1, s2, s3);
-          const diff = Math.max(s1, s2, s3) - minSurco;
 
-          data.tires.push({ position, makeModel: tireMakeModel, surco1: s1, surco2: s2, surco3: s3, photoURL: 'N/A' });
-          if (photoFile) data.photoFiles.push({ file: photoFile, position });
+  <!-- Firebase + App (ESM) -->
 
-          if (minSurco < 3.0) reviewMessages.push({ type: 'alert', text: `⚠️ ${position} (${tireMakeModel}) min ${minSurco.toFixed(1)} mm → <strong>REEMPLAZO OBLIGATORIO</strong>.` });
-          else if (minSurco < 5.0) reviewMessages.push({ type: 'warning', text: `🟠 ${position} (${tireMakeModel}) min ${minSurco.toFixed(1)} mm → monitorear, próximo a reemplazo.` });
-          else if (minSurco < 8.0) reviewMessages.push({ type: 'info', text: `🔵 ${position} (${tireMakeModel}) ${minSurco.toFixed(1)} mm → buen estado, programar rotación.` });
-          if (diff > 2.0) reviewMessages.push({ type: 'alert', text: `🚨 Desgaste irregular en ${position}. Δ ${diff.toFixed(1)} mm → revisar <strong>alineación y presión</strong>.` });
-          if (position === 'Repuesto' && minSurco < 10.0) reviewMessages.push({ type: 'warning', text: `🔧 Repuesto con ${minSurco.toFixed(1)} mm → considerar uso/renovación.` });
-        });
-        
-        finishReview(reviewMessages, dataError);
-      }
-      
-      /**
-       * Finaliza el proceso de revisión, mostrando mensajes y habilitando/deshabilitando botones.
-       * @param {Array} reviewMessages - Mensajes a mostrar.
-       * @param {boolean} [dataError=false] - Indica si hubo un error en los datos.
-       */
-      function finishReview(reviewMessages, dataError = false) {
-          if (!dataError) {
-              if (reviewMessages.length === 0) reviewMessages.push({ type: 'success', text: '✅ Evaluación OK. Listo para guardar.' });
-              appState.pendingReviewData = data;
-              DOMElements.saveButton.disabled = false;
-          }
-          displayReview(reviewMessages);
-          setReviewButtonState(false);
-          displayMessage('Revisión completa. Presiona "Guardar".', 'success');
-      }
+  <script type="module">
 
-      /**
-       * Guarda el registro validado en Firestore, subiendo las fotos si existen.
-       */
-      async function handleSave() {
-        if (!appState.authReady) return displayMessage('Error de autenticación. Intenta recargar.', 'error');
-        if (!appState.pendingReviewData) return displayMessage('Evalúa antes de guardar.', 'error');
-        
-        const dataToSave = appState.pendingReviewData;
-        
-        setSaveButtonState(true, 'Guardando...');
-        
-        try {
-          const uploadPromises = dataToSave.photoFiles.map(pf => uploadPhoto(pf.file, pf.position));
-          const uploadedPhotos = await Promise.all(uploadPromises);
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
 
-          dataToSave.tires = dataToSave.tires.map(tire => {
-            const uploaded = uploadedPhotos.find(up => up.position === tire.position);
-            return { ...tire, photoURL: uploaded ? uploaded.url : tire.photoURL };
-          });
+    import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
 
-          const { photoFiles, ...finalRecord } = { ...dataToSave, timestamp: serverTimestamp() };
-          
-          const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-          const recordsRef = collection(appState.db, `/artifacts/${appId}/public/data/tire_records`);
-          await addDoc(recordsRef, finalRecord);
-          
-          displayMessage('✅ Registro guardado con éxito', 'success');
-          resetRegistrationForm();
-          appState.pendingReviewData = null;
+    import { getFirestore, addDoc, onSnapshot, collection, query, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        } catch (e) {
-          console.error('Error al guardar:', e);
-          displayMessage(`❌ Error al guardar: ${e.message}`, 'error');
-        } finally {
-          setSaveButtonState(false);
-        }
-      }
-      
-      /**
-       * Sube un archivo de foto a Firebase Storage.
-       * @param {File} file - El archivo a subir.
-       * @param {string} position - La posición del neumático asociada a la foto.
-       * @returns {Promise<string>} La URL de descarga de la imagen subida.
-       */
-      async function uploadPhoto(file, position) {
-          if (!appState.storage || !appState.currentUserId) throw new Error("Storage o usuario no disponibles");
-          const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
-          const fileName = `${appState.currentUserId}_${position}_${Date.now()}.${ext}`;
-          const storageRef = ref(appState.storage, `tire_photos/${appState.currentUserId}/${fileName}`);
-          await uploadBytes(storageRef, file);
-          return getDownloadURL(storageRef);
-      }
+    import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-storage.js";
 
-      // === IA (GEMINI) ===
-      
-      /**
-       * Envía los datos de un registro a la API de Gemini para su análisis.
-       * @param {string} recordId - El ID del registro a analizar.
-       */
-      async function analyzeRecord(recordId) {
-          if (!appState.db || !appState.authReady) return displayMessage('Error: Base de datos no inicializada.', 'error');
-          
-          const apiKey = typeof __gemini_key !== 'undefined' ? __gemini_key : "";
-          if (!apiKey) return displayMessage('Error: Clave de API para IA no configurada.', 'error');
-          
-          const record = appState.currentRecords.find(r => r.id === recordId);
-          if (!record) return displayMessage('Registro no encontrado.', 'error');
-          
-          displayMessage(`Iniciando análisis experto para Orden N° ${record.orderNumber}...`, 'info');
 
-          const recordDetails = formatRecordForPrompt(record);
-          const systemPrompt = "Actúa como ingeniero de mantenimiento de flotas y experto en neumáticos. Analiza el informe de surcos. Indica neumáticos críticos (<3mm) y sugiere un plan de acción detallado (rotación, reemplazo, alineación, presión). Sé conciso y directo.";
-          const userQuery = `Orden N° ${record.orderNumber} | ${record.mileage} km\n\n${recordDetails}`;
 
-          const payload = { contents: [{ parts: [{ text: userQuery }] }], systemInstruction: { parts: [{ text: systemPrompt }] }};
+    // === GEMINI ===
 
-          try {
-              const res = await fetch(`${GEMINI_API_URL}?key=${apiKey}`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify(payload)
-              });
+    const GEMINI_MODEL = "gemini-2.5-flash-preview-05-20";
 
-              if (!res.ok) throw new Error(`Error en la API de IA: ${res.status}`);
-              
-              const result = await res.json();
-              const text = result?.candidates?.[0]?.content?.parts?.[0]?.text || 'No se pudo generar un análisis.';
+    const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/" + GEMINI_MODEL + ":generateContent";
 
-              displayMessage(`✅ Análisis de Orden N° ${record.orderNumber} generado.`, 'success');
-              // Mostramos el resultado en la consola para no saturar la UI.
-              console.log(`--- Análisis Gemini Orden N° ${record.orderNumber} ---`);
-              console.log(text);
-              console.log("------------------------------------------");
+    const apiKey = typeof __gemini_key !== 'undefined' ? __gemini_key : ""; // inyecta tu key en runtime o via proxy
 
-          } catch (e) {
-              console.error(e);
-              displayMessage('Error al conectar con la IA.', 'error');
-          }
-      }
 
-      // === FUNCIONES DE UTILIDAD ===
 
-      /**
-       * Muestra un mensaje temporal en la parte superior de la aplicación.
-       * @param {string} message - El texto del mensaje.
-       * @param {'info'|'success'|'error'} [type='info'] - El tipo de mensaje para el estilo.
-       */
-      function displayMessage(message, type = 'info') {
-        const container = DOMElements.appMessage;
-        const typeClasses = {
-          success: 'bg-green-500 text-white',
-          error: 'bg-red-500 text-white',
-          info: 'bg-blue-500 text-white',
-        };
-        container.className = `p-3 rounded-lg text-sm mb-4 font-medium shadow-md transition-opacity duration-300 ${typeClasses[type]}`;
-        container.textContent = message;
-        container.classList.remove('opacity-0', 'hidden');
-        setTimeout(() => {
-          container.classList.add('opacity-0');
-          setTimeout(() => container.classList.add('hidden'), 300);
-        }, 5000);
-      }
+    // === CONSTANTES GENERALES ===
 
-      /**
-       * Habilita o deshabilita los botones principales del formulario.
-       * @param {boolean} disabled - `true` para deshabilitar, `false` para habilitar.
-       */
-      function setFormButtonsDisabled(disabled) {
-        DOMElements.reviewButton.disabled = disabled;
-        DOMElements.saveButton.disabled = disabled;
-        if (!disabled && DOMElements.vehicleTypeSelect.value) {
-          DOMElements.reviewButton.disabled = false;
-        }
-      }
-      
-      function setReviewButtonState(loading, text = 'Evaluar Medición') {
-          DOMElements.reviewButton.disabled = loading;
-          DOMElements.reviewButton.innerHTML = loading ? loaderSvg(text) : text;
-      }
+    const BRANCHES = ["Copiapó","Vallenar","Santiago","Viña del Mar","Casa Matriz"];
 
-      function setSaveButtonState(loading, text = 'Guardar Registro') {
-          DOMElements.saveButton.disabled = loading;
-          DOMElements.saveButton.innerHTML = loading ? loaderSvg(text) : text;
-      }
-      
-      function loaderSvg(label) {
-        return `<svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white inline" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> ${label}`;
-      }
-      
-      function getPositionDescription(pos) { /* ... sin cambios ... */ }
-      function formatRecordForPrompt(record) { /* ... sin cambios ... */ }
-      function updateRandomRecommendation() { /* ... sin cambios ... */ }
-      function displayReview(messages) { /* ... sin cambios ... */ }
-      function exportToCsv() { /* ... sin cambios ... */ }
 
-      // Inicia la aplicación.
-      main();
-    });
-  </script>
+
+    // === GLOBALS ===
+
+    let app = null, db = null, auth = null, storage = null;
+
+    let currentUserId = null; // UID de Firebase
+
+    let authReady = false; // Estado para asegurar que Firebase terminó de autenticar
+
+    window.currentRecords = [];
+
+
+
+    const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+    // Se usa una variable local para la configuración en lugar de una global
+
+    const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+
+
+    const TIRES_STRUCTURE = {
+
+      'Bus': ['I1','D1','I2','D2','I3','D3','Repuesto'],
+
+      'Taxibus': ['I1','D1','I2','D2','I3','D3','Repuesto'],
+
+      'Minibús': ['I1','D1','I2','D2','Repuesto'],
+
+      'Minibús DR (Doble Rodado)': ['I1','D1','I2','D2','I3','D3','Repuesto'],
+
+      'Camioneta': ['I1','D1','I2','D2','Repuesto'],
+
+    };
+
+
+
+    const PREDEFINED_MODELS = [
+
+      'Michelin X Multiway 3D XZE','Pirelli FH:01 Energy','Bridgestone R260','Dunlop SP338','Goodyear KMAX S','Continental HT3','Hankook SmartFlex AH31','Westlake CB867','Sailun S701'
+
+    ];
+
+    const PREDEFINED_SIZES = ['225/75R16','245/70R19.5','275/80R22.5','295/80R22.5','315/80R22.5','11R22.5','12R22.5','10.00R20'];
+
+
+
+    const longevityTips = [
+
+      "Mantén la **presión correcta** semanalmente. La subinflación es el principal asesino de neumáticos.",
+
+      "Realiza la **rotación** cada 10–12 mil km para asegurar un desgaste uniforme.",
+
+      "Alinea si notas desgaste irregular o tras golpes fuertes.",
+
+      "Balancea al montar o tras reparaciones para evitar vibraciones.",
+
+      "Inspecciona cortes, protuberancias y objetos incrustados.",
+
+      "Conduce suave: evita frenazos y acelerones.",
+
+      "Revisa suspensión/amortiguadores: influyen en el desgaste.",
+
+      "Limpia neumáticos y llantas con regularidad.",
+
+    ];
+
+
+
+    // Función para parsear JSON de forma segura (necesaria para la config de Firebase)
+
+    function safeParse(jsonLike) { try { return JSON.parse(jsonLike); } catch { return null; } }
+
+    
+
+    // Función para habilitar/deshabilitar botones del formulario de registro
+
+    function setFormButtonsDisabled(disabled) {
+
+      const reviewBtn = document.getElementById('reviewButton');
+
+      const saveBtn = document.getElementById('saveButton');
+
+      if (reviewBtn) reviewBtn.disabled = disabled;
+
+      if (saveBtn) saveBtn.disabled = disabled;
+
+      // Si se está habilitando y ya se seleccionó un vehículo, se re-habilita Evaluar
+
+      if (!disabled && document.getElementById('vehicleType')?.value) {
+
+        if (reviewBtn) reviewBtn.disabled = false;
+
+      }
+
+    }
+
+
+
+    // === FIREBASE ===
+
+    async function initializeFirebase() {
+
+      setFormButtonsDisabled(true); // Deshabilita botones al inicio
+
+
+
+      // Intenta obtener y parsear la configuración de Firebase
+
+        let firebaseConfig = null;
+
+        try {
+
+            // El entorno inyecta __firebase_config como string. Lo parseamos.
+
+            if (typeof __firebase_config !== 'undefined') {
+
+                firebaseConfig = safeParse(__firebase_config);
+
+            }
+
+        } catch (e) {
+
+            console.error("Error al parsear __firebase_config:", e);
+
+        }
+
+
+
+      if (!firebaseConfig) { 
+
+            // Muestra el mensaje de error directamente en la UI superior
+
+            document.getElementById('firebaseErrorDisplay').textContent = `ERROR: Configuración de Firebase faltante.`;
+
+            document.getElementById('userIdDisplay').textContent = `ERROR`;
+
+            return; 
+
+      }
+
+      
+
+      const idEl = document.getElementById('userIdDisplay');
+
+      
+
+      try {
+
+          // 1. Inicializar app, db y storage
+
+          app = initializeApp(firebaseConfig);
+
+          db = getFirestore(app); // Inicializa db
+
+          storage = getStorage(app);
+
+          auth = getAuth(app);
+
+        
+
+          // 2. Autenticación (o con token o anónima)
+
+          const authResult = await (initialAuthToken ? signInWithCustomToken(auth, initialAuthToken) : signInAnonymously(auth));
+
+          currentUserId = authResult.user.uid;
+
+
+
+          // 3. Marcar como listo y mostrar ID 
+
+          authReady = true;
+
+          if(idEl) idEl.textContent = `ID Técnico: ${currentUserId.substring(0, 8)}...`;
+
+          setFormButtonsDisabled(false); // Habilita botones al finalizar la autenticación
+
+        
+
+          // 4. Cargar registros después de la autenticación
+
+          loadRecords();
+
+
+
+      } catch (e) {
+
+        console.error("Error de inicialización de Firebase/Autenticación:", e);
+
+        window.displayMessage('Error de inicialización. Revisa la consola para más detalles.','error');
+
+        // Si la autenticación falla, deshabilitar botones y mostrar error
+
+        setFormButtonsDisabled(true);
+
+        if(idEl) idEl.textContent = `ID Técnico: Falló la autenticación`;
+
+      }
+
+    }
+
+
+
+    let unsubscribe = null; // para limpiar onSnapshot
+
+    // Función para cargar TODOS los registros de todas las zonales
+
+    function loadRecords() {
+
+      if (!db || !authReady) return;
+
+      if (typeof unsubscribe === 'function') { unsubscribe(); }
+
+      // Usamos la colección pública para ver todos los datos
+
+      const recordsRef = collection(db, `/artifacts/${appId}/public/data/tire_records`);
+
+      const q = query(recordsRef); // Sin filtro para ver todos los datos
+
+
+
+      unsubscribe = onSnapshot(q, (snapshot) => {
+
+        const records = [];
+
+        snapshot.forEach((doc) => records.push({ id: doc.id, ...doc.data() }));
+
+        window.currentRecords = records.sort((a,b) => (b.orderNumber||0) - (a.orderNumber||0));
+
+        displayRecords(window.currentRecords);
+
+      }, (err)=> console.error("onSnapshot error:", err));
+
+    }
+
+
+
+    async function uploadPhoto(file, position) {
+
+      if (!storage || !currentUserId) throw new Error("Storage o usuario no disponibles");
+
+      const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
+
+      const fileName = `${currentUserId}_${position}_${Date.now()}.${ext}`;
+
+      // Guardamos en una ruta que incluye el UID del dispositivo/técnico que sube la foto
+
+      const storageRef = ref(storage, `tire_photos/${currentUserId}/${fileName}`);
+
+      await uploadBytes(storageRef, file);
+
+      return getDownloadURL(storageRef);
+
+    }
+
+
+
+    // === IA (Gemini) ===
+
+    window.analyzeRecord = async function(recordId) {
+
+      if (!db || !authReady) { window.displayMessage('Error: Base de datos no inicializada.','error'); return; }
+
+      
+
+      const record = window.currentRecords.find(r => r.id === recordId);
+
+      if (!record) { window.displayMessage('Registro no encontrado','error'); return; }
+
+      
+
+      // 1. Mostrar mensaje de inicio (sustituye al modal de carga)
+
+      window.displayMessage('Iniciando análisis experto para Orden N° ' + record.orderNumber + '...','info');
+
+
+
+      const recordDetails = formatRecordForPrompt(record);
+
+      const systemPrompt = "Actúa como ingeniero de mantenimiento de flotas y experto en neumáticos. Analiza el informe de surcos. Indica neumáticos críticos (<3mm) y sugiere plan de acción (rotación, reemplazo, alineación, presión). Usa fuentes web cuando sea útil y lista citas.";
+
+      const userQuery = "Orden N° " + record.orderNumber + " | " + record.mileage + " km\n\n" + recordDetails;
+
+
+
+      const payload = { contents: [{ parts: [{ text: userQuery }] }], systemInstruction: { parts: [{ text: systemPrompt }] }, tools: [{ google_search: {} }] };
+
+
+
+      // Implementación de retroceso exponencial para reintentos
+
+      const MAX_RETRIES = 3;
+
+      for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+
+        try {
+
+          const res = await fetch(GEMINI_API_URL + "?key=" + apiKey, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+
+          if (!res.ok) {
+
+            if (attempt === MAX_RETRIES - 1) throw new Error("Gemini HTTP " + res.status);
+
+            const delay = Math.pow(2, attempt) * 1000;
+
+            await new Promise(resolve => setTimeout(resolve, delay));
+
+            continue; // Reintentar
+
+          }
+
+
+
+          const result = await res.json();
+
+          const candidate = result?.candidates?.[0];
+
+          
+
+          const text = candidate?.content?.parts?.[0]?.text || 'No se pudo generar un análisis.';
+
+          const sources = (candidate?.groundingMetadata?.groundingAttributions || []).map(a => ({ uri: a?.web?.uri, title: a?.web?.title })).filter(s => s.uri && s.title);
+
+          
+
+          // 2. Mostrar mensaje de éxito y detalle en consola (sustituye al modal de resultado)
+
+          window.displayMessage('✅ Análisis de Orden N° ' + record.orderNumber + ' generado. Revisa la consola para el informe completo.','success');
+
+          console.log("--- Análisis Gemini Orden N° " + record.orderNumber + " ---");
+
+          console.log(text);
+
+          if(sources.length) {
+
+              console.log("\nFuentes:");
+
+              sources.forEach(s => console.log(`- ${s.title}: ${s.uri}`));
+
+          }
+
+          console.log("-----------------------------------------------------");
+
+
+
+          return; // Éxito
+
+        } catch (e) {
+
+          if (attempt === MAX_RETRIES - 1) {
+
+            console.error(e);
+
+            window.displayMessage('Error al conectar con la IA o límite de reintentos alcanzado.','error');
+
+            return;
+
+          }
+
+          const delay = Math.pow(2, attempt) * 1000;
+
+          await new Promise(resolve => setTimeout(resolve, delay));
+
+        }
+
+      }
+
+    }
+
+
+
+    function formatRecordForPrompt(record) {
+
+      let detail = "Sucursal: " + (record.branchName || "N/A") + "\n";
+
+      detail += "Tipo de Vehículo: " + record.vehicleType + "\n";
+
+      detail += "Medida General: " + (record.tireSize || 'N/A') + "\n";
+
+      detail += "Marca/Modelo General: " + record.generalMakeModel + "\n";
+
+      detail += "Comentarios del Técnico: \"" + (record.generalComments || 'Ninguno') + "\"\n\n";
+
+      detail += "Estado de los Neumáticos:\n";
+
+      (record.tires||[]).forEach(t => {
+
+        const minSurco = Math.min(t.surco1, t.surco2, t.surco3);
+
+        const maxSurco = Math.max(t.surco1, t.surco2, t.surco3);
+
+        const diff = maxSurco - minSurco;
+
+        detail += "- " + t.position + " (" + t.makeModel + "): " + t.surco1 + "/" + t.surco2 + "/" + t.surco3 + " mm. Mín: " + minSurco.toFixed(1) + ". Δ: " + diff.toFixed(1) + " mm.\n";
+
+      });
+
+      detail += "\nLímite legal flota: 3.0 mm.";
+
+      return detail;
+
+    }
+
+
+
+    // === UI Helpers ===
+
+
+
+    window.switchTab = function(tabName) {
+
+      ['guide','register','records'].forEach(tab => {
+
+        const btn = document.getElementById("tab-button-" + tab);
+
+        const content = document.getElementById("tab-content-" + tab);
+
+        if (btn) btn.classList.toggle('active', tab === tabName);
+
+        if (content) content.classList.toggle('hidden', tab !== tabName);
+
+      });
+
+      if (tabName === 'guide') updateRandomRecommendation();
+
+      if (tabName === 'register') {
+
+        document.getElementById('reviewFeedback').innerHTML = '';
+
+        document.getElementById('saveButton').disabled = true;
+
+        document.getElementById('registrationForm').reset();
+
+        document.getElementById('tireInputsContainer').innerHTML = '';
+
+        const dateEl = document.getElementById('date');
+
+        if (dateEl) dateEl.value = new Date().toISOString().slice(0,10);
+
+        // Asegurar que los botones estén deshabilitados al cambiar de pestaña si authReady es false
+
+        setFormButtonsDisabled(!authReady);
+
+      }
+
+    }
+
+
+
+    window.generateTireInputs = function() {
+
+      const vehicleType = document.getElementById('vehicleType').value;
+
+      const container = document.getElementById('tireInputsContainer');
+
+      container.innerHTML = '';
+
+      const positions = TIRES_STRUCTURE[vehicleType] || [];
+
+
+
+      positions.forEach((position, index) => {
+
+        const positionDesc = getPositionDescription(position);
+
+        const block = '<div class="p-4 border border-gray-200 rounded-xl shadow-sm mb-4 bg-white">' +
+
+          '<h4 class="text-lg font-semibold text-primary mb-3">Neumático - Posición ' + (index + 1) + ' (' + position + ')</h4>' +
+
+          '<p class="text-sm text-gray-500 mb-4">' + positionDesc + '</p>' +
+
+          '<div class="mb-4">' +
+
+            '<label class="block text-xs font-medium text-gray-700 mb-1" for="tireMakeModel-' + index + '">Marca y Modelo (Específico)</label>' +
+
+            '<select id="tireMakeModel-' + index + '" name="tireMakeModel_' + position + '" class="form-control text-sm">' +
+
+              '<option value="" selected>Usar marca general del formulario principal</option>' +
+
+              PREDEFINED_MODELS.map(m => '<option value="' + m + '">' + m + '</option>').join('') +
+
+            '</select>' +
+
+          '</div>' +
+
+          '<div class="grid grid-cols-3 gap-2 mb-4">' +
+
+            [1,2,3].map(i =>
+
+              '<div>' +
+
+                '<label class="block text-xs font-medium text-gray-700 mb-1" for="surco-' + index + '-' + i + '">Surco ' + i + ' (mm)</label>' +
+
+                '<input type="number" id="surco-' + index + '-' + i + '" name="surco_' + position + '_' + i + '" min="0" max="25" step="0.1" class="form-control text-sm" placeholder="Ej: 5.5" required />' +
+
+              '</div>').join('') +
+
+          '</div>' +
+
+          '<div>' +
+
+            '<label class="block text-xs font-medium text-gray-700 mb-1" for="photo-' + index + '">Foto (menor surco – opcional)</label>' +
+
+            '<input type="file" id="photo-' + index + '" name="photo_' + position + '" accept="image/jpeg,image/png" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-secondary/10 file:text-secondary hover:file:bg-secondary/20" />' +
+
+            '<p class="text-xs text-gray-400 mt-1">Se guarda en Firebase Storage.</p>' +
+
+          '</div>' +
+
+        '</div>';
+
+        container.insertAdjacentHTML('beforeend', block);
+
+      });
+
+      // Solo habilitar el botón de revisión si se seleccionó un vehículo y la base de datos está lista
+
+      document.getElementById('reviewButton').disabled = positions.length === 0 || !authReady;
+
+    }
+
+
+
+    function getPositionDescription(pos) {
+
+      switch(pos){
+
+        case 'I1': return 'Eje 1 - Delantera Izquierda (Conductor)';
+
+        case 'D1': return 'Eje 1 - Delantera Derecha';
+
+        case 'I2': return 'Eje 2 - Trasera Izquierda';
+
+        case 'D2': return 'Eje 2 - Trasera Derecha';
+
+        case 'I3': return 'Eje 2 (Interior) - Izquierda (Doble Rodado)';
+
+        case 'D3': return 'Eje 2 (Interior) - Derecha (Doble Rodado)';
+
+        case 'Repuesto': return 'Rueda de Repuesto';
+
+        default: return pos;
+
+      }
+
+    }
+
+
+
+    window.handleReview = function(event){
+
+      event.preventDefault();
+
+      const form = document.getElementById('registrationForm');
+
+      const btn = document.getElementById('reviewButton');
+
+      const saveBtn = document.getElementById('saveButton');
+
+      const reviewContainer = document.getElementById('reviewFeedback');
+
+      let reviewMessages = [];
+
+
+
+      // ************************************************************
+
+      // ** Se mantiene la verificación con 'authReady' **
+
+      // ************************************************************
+
+      if (!authReady) { 
+
+          reviewMessages.push(msg('error','Base de datos no lista. Espera a que el ID Técnico aparezca.')); 
+
+          finishReview(btn); 
+
+          return displayReview(reviewMessages); 
+
+      }
+
+
+
+      btn.disabled = true; btn.innerHTML = loaderSvg("Evaluando...");
+
+      saveBtn.disabled = true; reviewContainer.innerHTML = ''; window.pendingReviewData = null;
+
+      
+
+      const vehicleType = form.vehicleType.value;
+
+      const generalMakeModel = form.makeModel.value;
+
+      const branchName = form.branchName.value; // Campo Sucursal / Zonal
+
+      const orderNumber = parseInt(form.orderNumber.value);
+
+      const mileage = parseInt(form.mileage.value);
+
+      const dateVal = form.date.value;
+
+      const tireSize = form.tireSize.value;
+
+      const generalComments = form.generalComments.value || '';
+
+
+
+      if (isNaN(orderNumber) || isNaN(mileage) || !dateVal || !generalMakeModel || !tireSize || !branchName) {
+
+        reviewMessages.push(msg('error','Completa Sucursal, Nro de orden, Kilometraje, Fecha, Medida y Marca/Modelo general.'));
+
+        finishReview(btn); return displayReview(reviewMessages);
+
+      }
+
+
+
+      const data = { 
+
+        orderNumber, mileage, date: dateVal, tireSize, vehicleType, 
+
+        generalMakeModel, generalComments, technicianId: currentUserId, branchName, tires: [], photoFiles: [] 
+
+      };
+
+      
+
+      const positions = TIRES_STRUCTURE[vehicleType] || [];
+
+      let dataError = false;
+
+
+
+      positions.forEach(position => {
+
+        const s1 = parseFloat(form["surco_" + position + "_1"]?.value);
+
+        const s2 = parseFloat(form["surco_" + position + "_2"]?.value);
+
+        const s3 = parseFloat(form["surco_" + position + "_3"]?.value);
+
+        const tireMakeModel = form["tireMakeModel_" + position]?.value || generalMakeModel;
+
+        const photoInput = form["photo_" + position];
+
+        const photoFile = (photoInput && photoInput.files.length) ? photoInput.files[0] : null;
+
+
+
+        if ([s1,s2,s3].some(v => Number.isNaN(v))) { reviewMessages.push(msg('error', 'Error en ' + position + ': surcos incompletos/invalidos.')); dataError = true; return; }
+
+        if ([s1,s2,s3].some(v => v < 0 || v > 25)) { reviewMessages.push(msg('error', 'Error en ' + position + ': surco fuera de rango (0–25 mm).')); dataError = true; return; }
+
+
+
+        const surcos = [s1,s2,s3];
+
+        const minSurco = Math.min(...surcos); const maxSurco = Math.max(...surcos); const diff = maxSurco - minSurco;
+
+
+
+        data.tires.push({ position, makeModel: tireMakeModel, surco1: s1, surco2: s2, surco3: s3, photoURL: 'N/A' });
+
+        if (photoFile) data.photoFiles.push({ file: photoFile, position });
+
+
+
+        if (minSurco < 3.0) reviewMessages.push(msg('alert', "⚠️ " + position + " (" + tireMakeModel + ") min " + minSurco.toFixed(1) + " mm → **REEMPLAZO OBLIGATORIO**."));
+
+        else if (minSurco < 5.0) reviewMessages.push(msg('warning', "🟠 " + position + " (" + tireMakeModel + ") min " + minSurco.toFixed(1) + " mm → monitorear, próximo a reemplazo."));
+
+        else if (minSurco < 8.0) reviewMessages.push(msg('info', "🔵 " + position + " (" + tireMakeModel + ") " + minSurco.toFixed(1) + " mm → buen estado, programar rotación."));
+
+        if (diff > 2.0) reviewMessages.push(msg('alert', "🚨 Desgaste irregular en " + position + ". Δ " + diff.toFixed(1) + " mm → revisar **alineación y presión**."));
+
+        if (position === 'Repuesto' && minSurco < 10.0) reviewMessages.push(msg('warning', "🔧 Repuesto con " + minSurco.toFixed(1) + " mm → considerar uso/renovación."));
+
+      });
+
+
+
+      if (dataError) { finishReview(btn); return displayReview(reviewMessages); }
+
+      if (reviewMessages.length === 0) reviewMessages.push(msg('success','✅ Evaluación OK. Listo para guardar.'));
+
+
+
+      window.pendingReviewData = data;
+
+      document.getElementById('saveButton').disabled = false;
+
+      finishReview(btn);
+
+      displayReview(reviewMessages);
+
+      window.displayMessage('Revisión completa. Presiona "Guardar".','success');
+
+    }
+
+
+
+    function msg(type, text){ return { type, text }; }
+
+    function loaderSvg(label){ return '<svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white inline" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> ' + label; }
+
+    function finishReview(btn){ 
+
+        // Solo re-habilita si authReady es true
+
+        if(authReady) btn.disabled = !document.getElementById('vehicleType')?.value; 
+
+        btn.innerHTML = 'Evaluar Medición'; 
+
+    }
+
+
+
+    function displayReview(messages){
+
+      const reviewContainer = document.getElementById('reviewFeedback');
+
+      let html = '';
+
+      messages.forEach(m => {
+
+        let classes = 'p-3 rounded-lg text-sm mb-2 shadow-sm ';
+
+        if (m.type === 'alert') classes += 'bg-red-100 text-red-800 border-red-300 border-l-4';
+
+        else if (m.type === 'warning') classes += 'bg-yellow-100 text-yellow-800 border-yellow-300 border-l-4';
+
+        else if (m.type === 'success') classes += 'bg-green-100 text-green-800 border-green-300 border-l-4 font-bold';
+
+        else if (m.type === 'info') classes += 'bg-blue-100 text-blue-800 border-blue-300 border-l-4';
+
+        else if (m.type === 'error') classes += 'bg-gray-200 text-gray-800 border-red-500 border-l-4 font-bold';
+
+        html += '<div class="' + classes + '">' + m.text + '</div>';
+
+      });
+
+      reviewContainer.innerHTML = html;
+
+    }
+
+
+
+    window.handleSave = async function(){
+
+      if (!authReady) return window.displayMessage('Error de autenticación. Intenta recargar.','error');
+
+      
+
+      const data = window.pendingReviewData;
+
+      if (!data) return window.displayMessage('Evalúa antes de guardar','error');
+
+      
+
+      const saveBtn = document.getElementById('saveButton');
+
+      saveBtn.disabled = true; saveBtn.innerHTML = loaderSvg('Guardando...');
+
+      try {
+
+        const uploaded = await Promise.all((data.photoFiles||[]).map(async it => ({ position: it.position, url: await uploadPhoto(it.file, it.position) })));
+
+        data.tires = data.tires.map(t => { const f = uploaded.find(u => u.position === t.position); return { ...t, photoURL: f ? f.url : t.photoURL }; });
+
+        const { photoFiles, ...finalRecord } = { ...data, timestamp: serverTimestamp() };
+
+        // Guardando en colección pública para que todos los vean
+
+        const recordsRef = collection(db, "/artifacts/" + appId + "/public/data/tire_records");
+
+        await addDoc(recordsRef, finalRecord);
+
+        window.displayMessage('✅ Registro guardado con éxito','success');
+
+        document.getElementById('registrationForm').reset();
+
+        document.getElementById('tireInputsContainer').innerHTML = '';
+
+        document.getElementById('reviewFeedback').innerHTML = '';
+
+        window.pendingReviewData = null;
+
+        
+
+        // Corregir el estado de los botones después de resetear el formulario
+
+        const reviewBtn = document.getElementById('reviewButton');
+
+        if (reviewBtn) reviewBtn.disabled = true;
+
+
+
+        const dateEl = document.getElementById('date');
+
+        if (dateEl) dateEl.value = new Date().toISOString().slice(0,10);
+
+      } catch (e) {
+
+        console.error('Guardar error', e);
+
+        window.displayMessage("❌ Error al guardar: " + e.message,'error');
+
+      } finally {
+
+        saveBtn.disabled = false; saveBtn.innerHTML = 'Guardar Registro';
+
+      }
+
+    }
+
+
+
+    window.displayMessage = function(message, type='info'){
+
+      const container = document.getElementById('appMessage');
+
+      let classes = 'p-3 rounded-lg text-sm mb-4 font-medium shadow-md transition-opacity duration-300';
+
+      classes += (type==='success') ? ' bg-green-500 text-white' : (type==='error' ? ' bg-red-500 text-white' : ' bg-blue-500 text-white');
+
+      container.className = classes;
+
+      container.textContent = message;
+
+      container.classList.remove('opacity-0','hidden');
+
+      setTimeout(()=>{ container.classList.add('opacity-0'); setTimeout(()=> container.classList.add('hidden'), 300); }, 5000);
+
+    }
+
+
+
+    function updateRandomRecommendation(){
+
+      const tip = longevityTips[Math.floor(Math.random()*longevityTips.length)];
+
+      document.getElementById('randomTip').innerHTML = tip.replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>');
+
+    }
+
+
+
+    function displayRecords(records){
+
+      const container = document.getElementById('recordsTableBody');
+
+      container.innerHTML = '';
+
+      if (!records.length) { container.innerHTML = '<tr><td colspan="7" class="text-center py-4 text-gray-500">No hay registros disponibles en el historial.</td></tr>'; return; }
+
+      
+
+      records.forEach(record => {
+
+        const dateStr = record.date ? new Date(record.date).toLocaleDateString('es-CL') : '-';
+
+        const minSurco = (record.tires||[]).reduce((min, t)=> Math.min(min, t.surco1, t.surco2, t.surco3), 99);
+
+        const criticalClass = minSurco < 3.0 ? 'bg-red-100 text-red-800 font-bold' : (minSurco < 5.0 ? 'bg-yellow-100 text-yellow-800' : 'text-gray-700');
+
+        const branch = record.branchName || 'N/A';
+
+        
+
+        const row = '<tr class="border-b hover:bg-gray-50 transition">' +
+
+          '<td class="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">' + record.orderNumber + '</td>' +
+
+          '<td class="px-4 py-3 whitespace-nowrap text-sm text-gray-600 font-semibold">' + branch + '</td>' +
+
+          '<td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">' + record.vehicleType + '</td>' +
+
+          '<td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">' + (record.mileage||0).toLocaleString('es-CL') + ' km</td>' +
+
+          '<td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">' + dateStr + '</td>' +
+
+          '<td class="px-4 py-3 whitespace-nowrap text-sm ' + criticalClass + '">' + (Number.isFinite(minSurco)?minSurco.toFixed(1):'-') + ' mm</td>' +
+
+          '<td class="px-4 py-3 whitespace-nowrap text-right text-sm font-medium">' +
+
+            '<button onclick="window.analyzeRecord(\'' + record.id + '\')" class="text-primary hover:text-secondary p-2 rounded-full transition"><span class="text-lg">✨</span> Analizar</button>' +
+
+          '</td>' +
+
+        '</tr>';
+
+        container.insertAdjacentHTML('beforeend', row);
+
+      });
+
+    }
+
+
+
+    window.exportToCsv = function(){
+
+      if (!window.currentRecords.length) return window.displayMessage('No hay datos para exportar','error');
+
+      let csv = "data:text/csv;charset=utf-8,";
+
+      const baseHeaders = ["Orden","Sucursal","Kilometraje","Fecha","Tipo Vehículo","Marca General","Medida","Comentarios","Técnico_ID"];
+
+      const superset = Array.from(new Set(Object.values(TIRES_STRUCTURE).flat()));
+
+      const tireHeaders = superset.flatMap(pos => [
+
+        "Posicion_" + pos + "_Modelo","Posicion_" + pos + "_Surco1","Posicion_" + pos + "_Surco2","Posicion_" + pos + "_Surco3","Posicion_" + pos + "_FotoURL"
+
+      ]);
+
+      const headers = baseHeaders.concat(tireHeaders);
+
+      csv += headers.join(";") + "\r\n";
+
+
+
+      window.currentRecords.forEach(record => {
+
+        const row = [
+
+          record.orderNumber,
+
+          record.branchName || 'N/A',
+
+          record.mileage,
+
+          record.date,
+
+          record.vehicleType,
+
+          record.generalMakeModel,
+
+          record.tireSize,
+
+          '"' + (record.generalComments||'').replace(/"/g,'""') + '"',
+
+          record.technicianId
+
+        ];
+
+        const tMap = (record.tires||[]).reduce((acc,t)=>{ acc[t.position]=t; return acc; },{});
+
+        superset.forEach(pos => {
+
+          const t = tMap[pos];
+
+          row.push(t ? t.makeModel : '');
+
+          row.push(t ? t.surco1 : '');
+
+          row.push(t ? t.surco2 : '');
+
+          row.push(t ? t.surco3 : '');
+
+          row.push(t ? (t.photoURL==='N/A'?'':t.photoURL) : '');
+
+        });
+
+        csv += row.join(";") + "\r\n";
+
+      });
+
+
+
+      const uri = encodeURI(csv);
+
+      const a = document.createElement('a');
+
+      a.href = uri; a.download = 'registros_neumaticos_' + (new Date().toISOString().slice(0, 10)) + '.csv';
+
+      document.body.appendChild(a); a.click(); a.remove();
+
+      window.displayMessage('Exportación lista (CSV)','success');
+
+    }
+
+    
+
+    // === INIT ===
+
+    window.onload = function(){
+
+      // fecha por defecto
+
+      const dateEl = document.getElementById('date');
+
+      if (dateEl) dateEl.value = new Date().toISOString().slice(0,10);
+
+
+
+      initializeFirebase().then(() => {
+
+        // Cargar opciones de Marca/Modelo y Medida
+
+        const makeModelSelect = document.getElementById('makeModel');
+
+        const tireSizeSelect = document.getElementById('tireSize');
+
+        PREDEFINED_MODELS.forEach(m => makeModelSelect.insertAdjacentHTML('beforeend', '<option value="' + m + '">' + m + '</option>'));
+
+        PREDEFINED_SIZES.forEach(s => tireSizeSelect.insertAdjacentHTML('beforeend', '<option value="' + s + '">' + s + '</option>'));
+
+        
+
+        // Cargar opciones de Sucursal
+
+        const branchSelect = document.getElementById('branchName');
+
+        BRANCHES.forEach(b => branchSelect.insertAdjacentHTML('beforeend', '<option value="' + b + '">' + b + '</option>'));
+
+        
+
+        window.switchTab('guide');
+
+      });
+
+    }
+
+  </script>
+
 </head>
 
+
+
 <body class="bg-background min-h-screen flex flex-col">
-  <div id="app-container" class="flex flex-col flex-grow">
-    <header class="bg-white shadow-md sticky top-0 z-10">
-      <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-3">
-        <div class="flex justify-between items-center">
-          <h1 class="text-2xl font-bold text-gray-800">
-            <span class="text-primary">Flota</span> TRACK
-          </h1>
-          <div class="flex items-center space-x-4">
-            <span id="firebaseErrorDisplay" class="text-sm font-medium text-red-600"></span>
-            <span id="userIdDisplay" class="text-sm font-medium text-gray-600">ID Técnico: Cargando...</span>
-          </div>
-        </div>
-      </div>
-      <nav class="border-t border-gray-200">
-        <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div class="flex justify-start -mb-px">
-                <button id="tab-button-guide" data-tab="guide" class="tab-button text-gray-500 hover:text-primary py-3 px-4 text-sm font-medium">Guía Rápida</button>
-                <button id="tab-button-register" data-tab="register" class="tab-button text-gray-500 hover:text-primary py-3 px-4 text-sm font-medium">Registrar Medición</button>
-                <button id="tab-button-records" data-tab="records" class="tab-button text-gray-500 hover:text-primary py-3 px-4 text-sm font-medium">Historial</button>
-            </div>
-        </div>
-      </nav>
-    </header>
 
-    <div id="appMessage" class="max-w-4xl mx-auto w-full px-4 sm:px-6 lg:px-8 mt-4 opacity-0 hidden"></div>
+    <!-- El Modal de Análisis IA ha sido removido según solicitud. -->
 
-    <main class="flex-grow py-6">
-      <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-        
-        <div id="tab-content-guide" class="tab-content hidden">
-          </div>
+    
 
-        <div id="tab-content-register" class="tab-content hidden">
-          <form id="registrationForm" class="space-y-6">
-            <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-                <h3 class="text-xl font-semibold text-gray-800 mb-4">Datos del Vehículo</h3>
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    </div>
-            </div>
+    <div id="app-container" class="flex flex-col flex-grow">
 
-            <div id="tireInputsContainer" class="space-y-4"></div>
+        <!-- Header -->
 
-            <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-200 mt-6">
-              <h3 class="text-xl font-semibold text-gray-800 mb-4">Evaluación y Acciones</h3>
-              <div id="reviewFeedback" class="mb-4"></div>
-              <div class="flex items-center justify-end space-x-3">
-                <button type="submit" id="reviewButton" class="bg-accent hover:bg-yellow-500 text-yellow-900 font-bold py-2 px-5 rounded-lg transition" disabled>Evaluar Medición</button>
-                <button type="button" id="saveButton" class="bg-primary hover:bg-green-700 text-white font-bold py-2 px-5 rounded-lg transition" disabled>Guardar Registro</button>
-              </div>
-            </div>
-          </form>
-        </div>
+        <header class="bg-white shadow-md sticky top-0 z-10">
 
-        <div id="tab-content-records" class="tab-content hidden">
-          <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-            <div class="p-4 sm:p-6 flex justify-between items-center border-b">
-                <h3 class="text-xl font-semibold text-gray-800">Historial de Registros</h3>
-                <button id="exportCsvButton" class="bg-gray-200 hover:bg-gray-300 text-gray-700 font-bold py-2 px-4 rounded-lg text-sm transition">Exportar a CSV</button>
-            </div>
-            <div class="overflow-x-auto">
-                <table class="min-w-full divide-y divide-gray-200">
-                    <thead class="bg-gray-50">
-                        </thead>
-                    <tbody id="recordsTableBody" class="bg-white divide-y divide-gray-200">
-                        <tr><td colspan="7" class="text-center py-4 text-gray-500">Cargando registros...</td></tr>
-                    </tbody>
-                </table>
-            </div>
-          </div>
-        </div>
+            <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-3">
 
-      </div>
-    </main>
-  </div>
-</body>
-</html>
+                <div class="flex justify-between items-center">
+
+                    <h1 class="text-2xl font-bold text-gray-800">
+
+                        <span class="text-primary">Flota</span> TRACK
+
+                    </h1>
+
+                    <div class="flex items-center space-x-4">
+
+                        <!-- ID para mostrar el error de Firebase si ocurre (SOLUCION 1) -->
+
+                        <span id="firebaseErrorDisplay" class="text-sm font-medium text-red-600"></span> 
+
+                        <!-- Muestra el ID de sesión generado por Firebase -->
+
+                        <span id="userIdDisplay" class="text-sm font-medium text-gray-600">ID Técnico: Cargando...</span>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+            <!-- Navigation Tabs -->
+
+            <nav class="border-t border-gray-200">
+
+                <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+
+                    <div class="flex space-x-4 sm:space-x-8"
+
+
+
+
+
+Ver razonamiento
+Claro, el error principal en tu código de autenticación es que utiliza un bloque try/catch genérico que no diferencia entre los distintos tipos de fallos que pueden ocurrir (por ejemplo, un token inválido, un problema de red o una configuración incorrecta en Firebase). Además, la autenticación se realiza una sola vez al cargar la página, sin un mecanismo robusto que reaccione a cambios en el estado de la sesión.
+
+Para mejorarlo, la solución ideal es usar el observador onAuthStateChanged. Este método de Firebase es la forma recomendada de gestionar el estado de la sesión, ya que se activa automáticamente cuando un usuario inicia o cierra sesión, o cuando su token se actualiza. Esto hace que tu aplicación sea más reactiva y resiliente.
+
+A continuación, te presento el código corregido y una explicación detallada de los cambios.
+
+Código Corregido y Comentado
+He refactorizado la función initializeFirebase para que sea más robusta, clara y proporcione mensajes de error mucho más útiles para el usuario final.
+
+JavaScript
+
+// === FIREBASE ===
+    async function initializeFirebase() {
+      setFormButtonsDisabled(true); // Deshabilita botones al inicio
+      const idEl = document.getElementById('userIdDisplay');
+      const errorEl = document.getElementById('firebaseErrorDisplay');
+
+      // 1. PARSEO DE CONFIGURACIÓN
+      let firebaseConfig = null;
+      try {
+        if (typeof __firebase_config !== 'undefined') {
+            firebaseConfig = safeParse(__firebase_config);
+        }
+      } catch (e) {
+          console.error("Error al parsear __firebase_config:", e);
+      }
+
+      if (!firebaseConfig) { 
+          errorEl.textContent = `ERROR: Configuración de Firebase inválida o faltante.`;
+          idEl.textContent = `ID Técnico: Desconectado`;
+          return; 
+      }
+      
+      try {
+          // 2. INICIALIZACIÓN DE SERVICIOS
+          app = initializeApp(firebaseConfig);
+          db = getFirestore(app);
+          storage = getStorage(app);
+          auth = getAuth(app);
+
+        // 3. GESTIÓN DE ESTADO DE AUTENTICACIÓN (LA MEJORA PRINCIPAL)
+        // onAuthStateChanged es un "oyente" que reacciona a los cambios de sesión.
+        auth.onAuthStateChanged(user => {
+            if (user) {
+                // --- ESTADO: AUTENTICADO ---
+                currentUserId = user.uid;
+                authReady = true;
+                errorEl.textContent = ''; // Limpia errores previos
+                idEl.textContent = `ID Técnico: ${currentUserId.substring(0, 8)}...`;
+                setFormButtonsDisabled(false);
+                
+                // Cargar registros solo cuando la autenticación es exitosa y el usuario está listo
+                if (window.currentRecords.length === 0) {
+                   loadRecords();
+                }
+
+            } else {
+                // --- ESTADO: DESCONECTADO ---
+                currentUserId = null;
+                authReady = false;
+                idEl.textContent = `ID Técnico: No autenticado`;
+                setFormButtonsDisabled(true);
+            }
+        });
+
+        // 4. INTENTO DE INICIO DE SESIÓN INICIAL
+        // Ahora, el inicio de sesión se maneja en su propia función asíncrona
+        // para capturar errores específicos.
+        await attemptInitialSignIn();
+
+      } catch (e) {
+        console.error("Error crítico de inicialización de Firebase:", e);
+        errorEl.textContent = "Error grave de Firebase. No se puede iniciar la app.";
+        idEl.textContent = `ID Técnico: Fallo Crítico`;
+        setFormButtonsDisabled(true);
+      }
+    }
+
+    // NUEVA FUNCIÓN PARA MANEJAR EL INTENTO DE LOGIN
+    async function attemptInitialSignIn() {
+        const errorEl = document.getElementById('firebaseErrorDisplay');
+        try {
+            if (initialAuthToken) {
+                await signInWithCustomToken(auth, initialAuthToken);
+            } else {
+                await signInAnonymously(auth);
+            }
+            // El éxito será manejado por onAuthStateChanged
+        } catch (error) {
+            console.error("Fallo el intento de inicio de sesión:", error.code, error.message);
+            // Mapeo de errores comunes a mensajes claros para el usuario
+            switch (error.code) {
+                case 'auth/invalid-custom-token':
+                    errorEl.textContent = "Error: El token de autenticación es inválido o ha expirado.";
+                    break;
+                case 'auth/network-request-failed':
+                    errorEl.textContent = "Error: Falla de red. Revisa tu conexión a internet.";
+                    break;
+                case 'auth/operation-not-allowed':
+                    errorEl.textContent = "Error: El inicio de sesión anónimo no está habilitado en Firebase.";
+                    break;
+                default:
+                    errorEl.textContent = "Error de autenticación desconocido.";
+                    break;
+            }
+            // El estado de "desconectado" será manejado por onAuthStateChanged
+        }
+    }
+
