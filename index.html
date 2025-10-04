@@ -51,11 +51,11 @@
     const apiKey = typeof __gemini_key !== 'undefined' ? __gemini_key : "";
     const BRANCHES = ["Copiapó", "Vallenar", "Santiago", "Viña del Mar", "Casa Matriz"];
     const TIRES_STRUCTURE = {
-      'Bus': ['I1', 'D1', 'I2', 'D2', 'I3', 'D3', 'Repuesto'],
-      'Taxibus': ['I1', 'D1', 'I2', 'D2', 'I3', 'D3', 'Repuesto'],
-      'Minibús': ['I1', 'D1', 'I2', 'D2', 'Repuesto'],
-      'Minibús DR (Doble Rodado)': ['I1', 'D1', 'I2', 'D2', 'I3', 'D3', 'Repuesto'],
-      'Camioneta': ['I1', 'D1', 'I2', 'D2', 'Repuesto'],
+      'Bus': ['P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'Repuesto'],
+      'Taxibus': ['P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'Repuesto'],
+      'Minibús': ['P1', 'P2', 'P3', 'P4', 'Repuesto'],
+      'Minibús DR (Doble Rodado)': ['P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'Repuesto'],
+      'Camioneta': ['P1', 'P2', 'P3', 'P4', 'Repuesto'],
     };
     const PREDEFINED_MODELS = [
       'Michelin X Multiway 3D XZE', 'Pirelli FH:01 Energy', 'Bridgestone R260', 'Dunlop SP338', 'Goodyear KMAX S', 'Continental HT3', 'Hankook SmartFlex AH31', 'Westlake CB867', 'Sailun S701'
@@ -575,9 +575,9 @@
 
     function getPositionDescription(pos) {
       const descriptions = {
-        'I1': 'Eje 1 - Delantera Izquierda (Conductor)', 'D1': 'Eje 1 - Delantera Derecha',
-        'I2': 'Eje 2 - Trasera Izquierda', 'D2': 'Eje 2 - Trasera Derecha',
-        'I3': 'Eje 2 (Interior) - Izquierda (Doble Rodado)', 'D3': 'Eje 2 (Interior) - Derecha (Doble Rodado)',
+        'P1': 'Eje 1 - Delantera Izquierda (Conductor)', 'P2': 'Eje 1 - Delantera Derecha',
+        'P3': 'Eje 2 - Trasera Izquierda', 'P6': 'Eje 2 - Trasera Derecha',
+        'P4': 'Eje 2 (Interior) - Izquierda (Doble Rodado)', 'P5': 'Eje 2 (Interior) - Derecha (Doble Rodado)',
         'Repuesto': 'Rueda de Repuesto'
       };
       return descriptions[pos] || pos;
