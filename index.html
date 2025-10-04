@@ -1,9 +1,9 @@
-    <!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Flota TRACK RRS - Registro de Surcos</title>
+  <title>Flota TRACK - Registro de Surcos</title>
 
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -37,6 +37,9 @@
     import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
     import { getFirestore, addDoc, onSnapshot, collection, query, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
     import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-storage.js";
+    import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+    setLogLevel('Debug'); // Para ver logs de Firebase en consola
 
     // === GEMINI ===
     const GEMINI_MODEL = "gemini-2.5-flash-preview-05-20";
@@ -81,15 +84,29 @@
     ];
 
     function safeParse(jsonLike) { try { return JSON.parse(jsonLike); } catch { return null; } }
+    
+    // Función para habilitar/deshabilitar botones del formulario de registro
+    function setFormButtonsDisabled(disabled) {
+      const reviewBtn = document.getElementById('reviewButton');
+      const saveBtn = document.getElementById('saveButton');
+      if (reviewBtn) reviewBtn.disabled = disabled;
+      if (saveBtn) saveBtn.disabled = disabled;
+      // Si se está habilitando y ya se seleccionó un vehículo, se re-habilita Evaluar
+      if (!disabled && document.getElementById('vehicleType')?.value) {
+        if (reviewBtn) reviewBtn.disabled = false;
+      }
+    }
 
     // === FIREBASE ===
     async function initializeFirebase() {
+      setFormButtonsDisabled(true); // Deshabilita botones al inicio
+
       if (!firebaseConfig) { 
         document.getElementById('userIdDisplay').textContent = `ERROR: Configuración de Firebase faltante.`;
         return; 
       }
       app = initializeApp(firebaseConfig);
-      db = getFirestore(app);
+      db = getFirestore(app); // Inicializa db temprano
       storage = getStorage(app);
       auth = getAuth(app);
       try {
@@ -99,9 +116,10 @@
         const authResult = await (initialAuthToken ? signInWithCustomToken(auth, initialAuthToken) : signInAnonymously(auth));
         currentUserId = authResult.user.uid;
 
-        // 2. Marcar como listo y mostrar ID (soluciona el problema de "Cargando...")
+        // 2. Marcar como listo y mostrar ID 
         authReady = true;
         if(idEl) idEl.textContent = `ID Técnico: ${currentUserId.substring(0, 8)}...`;
+        setFormButtonsDisabled(false); // Habilita botones al finalizar la autenticación
         
         // 3. Cargar registros después de la autenticación
         loadRecords();
@@ -142,6 +160,8 @@
 
     // === IA (Gemini) ===
     window.analyzeRecord = async function(recordId) {
+      if (!db || !authReady) { window.displayMessage('Error: Base de datos no inicializada.','error'); return; }
+      
       const record = window.currentRecords.find(r => r.id === recordId);
       if (!record) { window.displayMessage('Registro no encontrado','error'); return; }
       
@@ -213,8 +233,6 @@
     }
 
     // === UI Helpers ===
-    // Las funciones window.showAnalysisModal y window.closeAnalysisModal han sido eliminadas.
-    // También se eliminaron los listeners de Escape y click externo relacionados al modal.
 
     window.switchTab = function(tabName) {
       ['guide','register','records'].forEach(tab => {
@@ -231,6 +249,8 @@
         document.getElementById('tireInputsContainer').innerHTML = '';
         const dateEl = document.getElementById('date');
         if (dateEl) dateEl.value = new Date().toISOString().slice(0,10);
+        // Asegurar que los botones estén deshabilitados al cambiar de pestaña si authReady es false
+        setFormButtonsDisabled(!authReady);
       }
     }
 
@@ -267,7 +287,8 @@
         '</div>';
         container.insertAdjacentHTML('beforeend', block);
       });
-      document.getElementById('reviewButton').disabled = positions.length === 0;
+      // Solo habilitar el botón de revisión si se seleccionó un vehículo y la base de datos está lista
+      document.getElementById('reviewButton').disabled = positions.length === 0 || !authReady;
     }
 
     function getPositionDescription(pos) {
@@ -291,10 +312,18 @@
       const reviewContainer = document.getElementById('reviewFeedback');
       let reviewMessages = [];
 
+      // ************************************************************
+      // ** CORRECCIÓN: Usar 'authReady' en lugar de sólo 'db' **
+      // ************************************************************
+      if (!authReady) { 
+          reviewMessages.push(msg('error','Base de datos no lista. Espera a que el ID Técnico aparezca.')); 
+          finishReview(btn); 
+          return displayReview(reviewMessages); 
+      }
+
       btn.disabled = true; btn.innerHTML = loaderSvg("Evaluando...");
       saveBtn.disabled = true; reviewContainer.innerHTML = ''; window.pendingReviewData = null;
-      if (!db) { reviewMessages.push(msg('error','Base de datos no lista')); finishReview(btn); return displayReview(reviewMessages); }
-
+      
       const vehicleType = form.vehicleType.value;
       const generalMakeModel = form.makeModel.value;
       const branchName = form.branchName.value; // Campo Sucursal / Zonal
@@ -353,7 +382,11 @@
 
     function msg(type, text){ return { type, text }; }
     function loaderSvg(label){ return '<svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white inline" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> ' + label; }
-    function finishReview(btn){ btn.disabled = false; btn.innerHTML = 'Evaluar Medición'; }
+    function finishReview(btn){ 
+        // Solo re-habilita si authReady es true
+        if(authReady) btn.disabled = !document.getElementById('vehicleType')?.value; 
+        btn.innerHTML = 'Evaluar Medición'; 
+    }
 
     function displayReview(messages){
       const reviewContainer = document.getElementById('reviewFeedback');
@@ -371,9 +404,10 @@
     }
 
     window.handleSave = async function(){
+      if (!authReady) return window.displayMessage('Error de autenticación. Intenta recargar.','error');
+      
       const data = window.pendingReviewData;
       if (!data) return window.displayMessage('Evalúa antes de guardar','error');
-      if (!authReady) return window.displayMessage('Error de autenticación. Intenta recargar.','error');
       
       const saveBtn = document.getElementById('saveButton');
       saveBtn.disabled = true; saveBtn.innerHTML = loaderSvg('Guardando...');
@@ -389,7 +423,11 @@
         document.getElementById('tireInputsContainer').innerHTML = '';
         document.getElementById('reviewFeedback').innerHTML = '';
         window.pendingReviewData = null;
-        document.getElementById('reviewButton').disabled = true;
+        
+        // Corregir el estado de los botones después de resetear el formulario
+        const reviewBtn = document.getElementById('reviewButton');
+        if (reviewBtn) reviewBtn.disabled = true;
+
         const dateEl = document.getElementById('date');
         if (dateEl) dateEl.value = new Date().toISOString().slice(0,10);
       } catch (e) {
@@ -697,3 +735,4 @@
     </div>
 </body>
 </html>
+
