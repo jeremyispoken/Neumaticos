@@ -1,5 +1,698 @@
 <!DOCTYPE html>
+<html lang="es"><!DOCTYPE html>
 <html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Registro de Surcos de Neumáticos</title>
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            primary: "#059669",
+            secondary: "#10b981",
+            accent: "#fbbf24",
+            background: "#f9fafb",
+          },
+          fontFamily: { sans: ["Inter", "sans-serif"] },
+        },
+      },
+    };
+  </script>
+  <style>
+    html, body { height: 100%; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
+    #app-container { min-height: 100vh; }
+    .tab-button { transition: all 0.2s; }
+    .tab-button.active { border-bottom: 4px solid #059669; font-weight: 600; color: #059669; }
+    .form-control { border-radius: 0.5rem; border: 1px solid #d1d5db; padding: 0.5rem 0.75rem; width: 100%; transition: all 0.15s; }
+    .form-control:focus { border-color: #059669; box-shadow: 0 0 0 3px rgba(5,150,105,0.5); outline: none; }
+    /* Modal de Análisis */
+    #analysis-modal { position: fixed; inset: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.7); z-index: 50; display: none; justify-content: center; align-items: center; }
+    #analysis-modal.show { display: flex; }
+    .modal-content { background: #fff; padding: 1.5rem; border-radius: 1rem; max-width: 90%; width: 600px; max-height: 90%; overflow-y: auto; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
+    /* Modal Login */
+    #login-modal { position: fixed; inset: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.6); z-index: 60; display: none; justify-content: center; align-items: center; }
+    #login-modal.show { display: flex; }
+  </style>
+
+  <!-- Firebase + App (ESM) -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+    import { getFirestore, addDoc, onSnapshot, collection, query, serverTimestamp, where } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+    import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-storage.js";
+
+    // === GEMINI ===
+    const GEMINI_MODEL = "gemini-2.5-flash-preview-05-20";
+    const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+    const apiKey = typeof __gemini_key !== 'undefined' ? __gemini_key : ""; // inyecta tu key en runtime o via proxy
+
+    // === LOGIN SIMPLE ===
+    const USERS = ["Copiapó","Vallenar","Santiago","Viña del Mar","Casa Matriz"];
+    const USER_TO_ID = {
+      "Copiapó": "copiapo",
+      "Vallenar": "vallenar",
+      "Santiago": "santiago",
+      "Viña del Mar": "vina_del_mar",
+      "Casa Matriz": "casa_matriz",
+    };
+    const PASSWORD = "FlotaVerschae.,"; // sin comillas
+
+    // === GLOBALS ===
+    let app = null, db = null, auth = null, storage = null;
+    let currentUserId = null; // se rellenará al hacer login
+    let currentUserLabel = null; // Copiapó, etc.
+    window.currentRecords = [];
+
+    const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+    const firebaseConfig = typeof __firebase_config !== 'undefined' ? safeParse(__firebase_config) : null;
+    const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+    const TIRES_STRUCTURE = {
+      'Bus': ['I1','D1','I2','D2','I3','D3','Repuesto'],
+      'Taxibus': ['I1','D1','I2','D2','I3','D3','Repuesto'],
+      'Minibús': ['I1','D1','I2','D2','Repuesto'],
+      'Minibús DR (Doble Rodado)': ['I1','D1','I2','D2','I3','D3','Repuesto'],
+      'Camioneta': ['I1','D1','I2','D2','Repuesto'],
+    };
+
+    const PREDEFINED_MODELS = [
+      'Michelin X Multiway 3D XZE','Pirelli FH:01 Energy','Bridgestone R260','Dunlop SP338','Goodyear KMAX S','Continental HT3','Hankook SmartFlex AH31','Westlake CB867','Sailun S701'
+    ];
+    const PREDEFINED_SIZES = ['225/75R16','245/70R19.5','275/80R22.5','295/80R22.5','315/80R22.5','11R22.5','12R22.5','10.00R20'];
+
+    const longevityTips = [
+      "Mantén la **presión correcta** semanalmente. La subinflación es el principal asesino de neumáticos.",
+      "Realiza la **rotación** cada 10–12 mil km para asegurar un desgaste uniforme.",
+      "Alinea si notas desgaste irregular o tras golpes fuertes.",
+      "Balancea al montar o tras reparaciones para evitar vibraciones.",
+      "Inspecciona cortes, protuberancias y objetos incrustados.",
+      "Conduce suave: evita frenazos y acelerones.",
+      "Revisa suspensión/amortiguadores: influyen en el desgaste.",
+      "Limpia neumáticos y llantas con regularidad.",
+    ];
+
+    function safeParse(jsonLike) { try { return JSON.parse(jsonLike); } catch { return null; } }
+
+    // === FIREBASE ===
+    async function initializeFirebase() {
+      if (!firebaseConfig) { console.error("firebaseConfig no disponible"); return; }
+      app = initializeApp(firebaseConfig);
+      db = getFirestore(app);
+      storage = getStorage(app);
+      auth = getAuth(app);
+      try { if (initialAuthToken) await signInWithCustomToken(auth, initialAuthToken); else await signInAnonymously(auth); }
+      catch (e) { console.error("Error de login Firebase:", e); }
+    }
+
+    let unsubscribe = null; // para limpiar onSnapshot al cambiar de usuario
+    function loadRecords() {
+      if (!db || !currentUserId) return;
+      if (typeof unsubscribe === 'function') { unsubscribe(); }
+      const recordsRef = collection(db, `/artifacts/${appId}/public/data/tire_records`);
+      const q = query(recordsRef, where("technicianId", "==", currentUserId));
+      unsubscribe = onSnapshot(q, (snapshot) => {
+        const records = [];
+        snapshot.forEach((doc) => records.push({ id: doc.id, ...doc.data() }));
+        window.currentRecords = records.sort((a,b) => (b.orderNumber||0) - (a.orderNumber||0));
+        displayRecords(window.currentRecords);
+      }, (err)=> console.error("onSnapshot error:", err));
+    }
+
+    async function uploadPhoto(file, position) {
+      if (!storage || !currentUserId) throw new Error("Storage o usuario no disponibles");
+      const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
+      const fileName = `${currentUserId}_${position}_${Date.now()}.${ext}`;
+      const storageRef = ref(storage, `tire_photos/${currentUserId}/${fileName}`);
+      await uploadBytes(storageRef, file);
+      return getDownloadURL(storageRef);
+    }
+
+    // === IA (Gemini) ===
+    window.analyzeRecord = async function(recordId) {
+      const record = window.currentRecords.find(r => r.id === recordId);
+      if (!record) { window.displayMessage('Registro no encontrado','error'); return; }
+      window.showAnalysisModal(true, record.orderNumber);
+
+      const recordDetails = formatRecordForPrompt(record);
+      const systemPrompt = "Actúa como ingeniero de mantenimiento de flotas y experto en neumáticos. Analiza el informe de surcos. Indica neumáticos críticos (<3mm) y sugiere plan de acción (rotación, reemplazo, alineación, presión). Usa fuentes web cuando sea útil y lista citas.";
+      const userQuery = `Orden Nº ${record.orderNumber} | ${record.mileage} km\n\n${recordDetails}`;
+
+      const payload = { contents: [{ parts: [{ text: userQuery }] }], systemInstruction: { parts: [{ text: systemPrompt }] }, tools: [{ google_search: {} }] };
+
+      try {
+        const res = await fetch(`${GEMINI_API_URL}?key=${apiKey}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        if (!res.ok) throw new Error(`Gemini HTTP ${res.status}`);
+        const result = await res.json();
+        const candidate = result?.candidates?.[0];
+        const text = candidate?.content?.parts?.[0]?.text || 'No se pudo generar un análisis.';
+        const sources = (candidate?.groundingMetadata?.groundingAttributions || []).map(a => ({ uri: a?.web?.uri, title: a?.web?.title })).filter(s => s.uri && s.title);
+        window.showAnalysisModal(false, record.orderNumber, text, sources);
+      } catch (e) {
+        console.error(e);
+        window.showAnalysisModal(false);
+        window.displayMessage('Error al conectar con la IA','error');
+      }
+    }
+
+    function formatRecordForPrompt(record) {
+      let detail = `Tipo de Vehículo: ${record.vehicleType}\n`;
+      detail += `Medida General: ${record.tireSize || 'N/A'}\n`;
+      detail += `Marca/Modelo General: ${record.generalMakeModel}\n`;
+      detail += `Comentarios del Técnico: "${record.generalComments || 'Ninguno'}"\n\n`;
+      detail += "Estado de los Neumáticos:\n";
+      (record.tires||[]).forEach(t => {
+        const minSurco = Math.min(t.surco1, t.surco2, t.surco3);
+        const maxSurco = Math.max(t.surco1, t.surco2, t.surco3);
+        detail += `- ${t.position} (${t.makeModel}): ${t.surco1}/${t.surco2}/${t.surco3} mm. Min: ${minSurco.toFixed(1)}. Δ: ${(maxSurco-minSurco).toFixed(1)} mm.\n`;
+      });
+      detail += "\nLímite legal flota: 3.0 mm.";
+      return detail;
+    }
+
+    // === UI Helpers ===
+    window.showAnalysisModal = function(show, orderNumber = '', analysisText = '', sources = []) {
+      const modal = document.getElementById('analysis-modal');
+      const modalCard = document.getElementById('analysis-modal-card');
+      const contentDiv = document.getElementById('analysisContent');
+      const titleDiv = document.getElementById('analysisTitle');
+
+      if (show) {
+        titleDiv.textContent = `Analizando Registro N° ${orderNumber}...`;
+        contentDiv.innerHTML = `
+          <div class=\"flex flex-col items-center justify-center p-8\">
+            <svg class=\"animate-spin h-8 w-8 text-primary\" xmlns=\"http://www.w3.org/2000/svg\" fill=\"none\" viewBox=\"0 0 24 24\">
+              <circle class=\"opacity-25\" cx=\"12\" cy=\"12\" r=\"10\" stroke=\"currentColor\" stroke-width=\"4\"></circle>
+              <path class=\"opacity-75\" fill=\"currentColor\" d=\"M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z\"></path>
+            </svg>
+            <p class=\"mt-4 text-gray-600 font-medium\">Generando análisis experto con Gemini...</p>
+          </div>`;
+        modal.classList.add('show');
+      } else if (analysisText) {
+        titleDiv.textContent = `Análisis Técnico IA - Orden N° ${orderNumber}`;
+        let html = `<p class=\"whitespace-pre-wrap mb-6 text-gray-700 leading-relaxed\">${analysisText}</p>`;
+        if (sources.length) {
+          html += `<h4 class=\"text-sm font-bold text-gray-600 mb-2 border-t pt-4\">Fuentes Utilizadas:</h4>`;
+          sources.forEach(s => { html += `<p class=\"text-xs text-blue-600 truncate mb-1\"><a href=\"${s.uri}\" target=\"_blank\" class=\"hover:underline\">${s.title}</a></p>`; });
+        } else {
+          html += `<p class=\"text-xs text-gray-500 mt-4 border-t pt-2\">Sin fuentes externas.</p>`;
+        }
+        contentDiv.innerHTML = html;
+        modal.classList.add('show');
+      } else {
+        modal.classList.remove('show');
+        contentDiv.innerHTML = '';
+      }
+    }
+
+    // Cierre del modal por: botón, click fuera y tecla ESC
+    window.closeAnalysisModal = function(){ window.showAnalysisModal(false); }
+    document.addEventListener('keydown', (e)=>{ if (e.key === 'Escape') window.showAnalysisModal(false); });
+    window.addEventListener('click', (e)=>{
+      const m = document.getElementById('analysis-modal');
+      const card = document.getElementById('analysis-modal-card');
+      if (!m.classList.contains('show')) return;
+      if (e.target === m) window.showAnalysisModal(false);
+    });
+
+    window.switchTab = function(tabName) {
+      if (!currentUserId) { window.displayMessage('Debes iniciar sesión','error'); showLogin(); return; }
+      ['guide','register','records'].forEach(tab => {
+        const btn = document.getElementById(`tab-button-${tab}`);
+        const content = document.getElementById(`tab-content-${tab}`);
+        if (btn) btn.classList.toggle('active', tab === tabName);
+        if (content) content.classList.toggle('hidden', tab !== tabName);
+      });
+      if (tabName === 'guide') updateRandomRecommendation();
+      if (tabName === 'register') {
+        document.getElementById('reviewFeedback').innerHTML = '';
+        document.getElementById('saveButton').disabled = true;
+        document.getElementById('registrationForm').reset();
+        document.getElementById('tireInputsContainer').innerHTML = '';
+        const dateEl = document.getElementById('date');
+        if (dateEl) dateEl.value = new Date().toISOString().slice(0,10);
+      }
+    }
+
+    window.generateTireInputs = function() {
+      const vehicleType = document.getElementById('vehicleType').value;
+      const container = document.getElementById('tireInputsContainer');
+      container.innerHTML = '';
+      const positions = TIRES_STRUCTURE[vehicleType] || [];
+
+      positions.forEach((position, index) => {
+        const positionDesc = getPositionDescription(position);
+        const block = `
+          <div class=\"p-4 border border-gray-200 rounded-xl shadow-sm mb-4 bg-white\">
+            <h4 class=\"text-lg font-semibold text-primary mb-3\">Neumático - Posición ${index + 1} (${position})</h4>
+            <p class=\"text-sm text-gray-500 mb-4\">${positionDesc}</p>
+            <div class=\"mb-4\">
+              <label class=\"block text-xs font-medium text-gray-700 mb-1\" for=\"tireMakeModel-${index}\">Marca y Modelo (Específico)</label>
+              <select id=\"tireMakeModel-${index}\" name=\"tireMakeModel_${position}\" class=\"form-control text-sm\">
+                <option value=\"\" selected>Usar marca general del formulario principal</option>
+                ${PREDEFINED_MODELS.map(m => `<option value=\"${m}\">${m}</option>`).join('')}
+              </select>
+            </div>
+            <div class=\"grid grid-cols-3 gap-2 mb-4\">
+              ${[1,2,3].map(i => `
+                <div>
+                  <label class=\"block text-xs font-medium text-gray-700 mb-1\" for=\"surco-${index}-${i}\">Surco ${i} (mm)</label>
+                  <input type=\"number\" id=\"surco-${index}-${i}\" name=\"surco_${position}_${i}\" min=\"0\" max=\"25\" step=\"0.1\" class=\"form-control text-sm\" placeholder=\"Ej: 5.5\" required />
+                </div>`).join('')}
+            </div>
+            <div>
+              <label class=\"block text-xs font-medium text-gray-700 mb-1\" for=\"photo-${index}\">Foto (menor surco – opcional)</label>
+              <input type=\"file\" id=\"photo-${index}\" name=\"photo_${position}\" accept=\"image/jpeg,image/png\" class=\"block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-secondary/10 file:text-secondary hover:file:bg-secondary/20\" />
+              <p class=\"text-xs text-gray-400 mt-1\">Se guarda en Firebase Storage.</p>
+            </div>
+          </div>`;
+        container.insertAdjacentHTML('beforeend', block);
+      });
+      document.getElementById('reviewButton').disabled = positions.length === 0;
+    }
+
+    function getPositionDescription(pos) {
+      switch(pos){
+        case 'I1': return 'Eje 1 - Delantera Izquierda (Conductor)';
+        case 'D1': return 'Eje 1 - Delantera Derecha';
+        case 'I2': return 'Eje 2 - Trasera Izquierda';
+        case 'D2': return 'Eje 2 - Trasera Derecha';
+        case 'I3': return 'Eje 2 (Interior) - Izquierda (Doble Rodado)';
+        case 'D3': return 'Eje 2 (Interior) - Derecha (Doble Rodado)';
+        case 'Repuesto': return 'Rueda de Repuesto';
+        default: return pos;
+      }
+    }
+
+    window.handleReview = function(event){
+      event.preventDefault();
+      if (!currentUserId) { window.displayMessage('Debes iniciar sesión','error'); return showLogin(); }
+      const form = document.getElementById('registrationForm');
+      const btn = document.getElementById('reviewButton');
+      const saveBtn = document.getElementById('saveButton');
+      const reviewContainer = document.getElementById('reviewFeedback');
+      let reviewMessages = [];
+
+      btn.disabled = true; btn.innerHTML = loaderSvg("Evaluando...");
+      saveBtn.disabled = true; reviewContainer.innerHTML = ''; window.pendingReviewData = null;
+      if (!db) { reviewMessages.push(msg('error','Base de datos no lista')); finishReview(btn); return displayReview(reviewMessages); }
+
+      const vehicleType = form.vehicleType.value;
+      const generalMakeModel = form.makeModel.value;
+      const orderNumber = parseInt(form.orderNumber.value);
+      const mileage = parseInt(form.mileage.value);
+      const dateVal = form.date.value;
+      const tireSize = form.tireSize.value;
+      const generalComments = form.generalComments.value || '';
+
+      if (isNaN(orderNumber) || isNaN(mileage) || !dateVal || !generalMakeModel || !tireSize) {
+        reviewMessages.push(msg('error','Completa Orden, Kilometraje, Fecha, Medida y Marca/Modelo general.'));
+        finishReview(btn); return displayReview(reviewMessages);
+      }
+
+      const data = { orderNumber, mileage, date: dateVal, tireSize, vehicleType, generalMakeModel, generalComments, technicianId: currentUserId, tires: [], photoFiles: [] };
+      const positions = TIRES_STRUCTURE[vehicleType] || [];
+      let dataError = false;
+
+      positions.forEach(position => {
+        const s1 = parseFloat(form[`surco_${position}_1`]?.value);
+        const s2 = parseFloat(form[`surco_${position}_2`]?.value);
+        const s3 = parseFloat(form[`surco_${position}_3`]?.value);
+        const tireMakeModel = form[`tireMakeModel_${position}`]?.value || generalMakeModel;
+        const photoInput = form[`photo_${position}`];
+        const photoFile = (photoInput && photoInput.files.length) ? photoInput.files[0] : null;
+
+        if ([s1,s2,s3].some(v => Number.isNaN(v))) { reviewMessages.push(msg('error',`Error en ${position}: surcos incompletos/invalidos.`)); dataError = true; return; }
+        if ([s1,s2,s3].some(v => v < 0 || v > 25)) { reviewMessages.push(msg('error',`Error en ${position}: surco fuera de rango (0–25 mm).`)); dataError = true; return; }
+
+        const surcos = [s1,s2,s3];
+        const minSurco = Math.min(...surcos); const maxSurco = Math.max(...surcos); const diff = maxSurco - minSurco;
+
+        data.tires.push({ position, makeModel: tireMakeModel, surco1: s1, surco2: s2, surco3: s3, photoURL: 'N/A' });
+        if (photoFile) data.photoFiles.push({ file: photoFile, position });
+
+        if (minSurco < 3.0) reviewMessages.push(msg('alert', `⚠️ ${position} (${tireMakeModel}) min ${minSurco.toFixed(1)} mm → **REEMPLAZO OBLIGATORIO**.`));
+        else if (minSurco < 5.0) reviewMessages.push(msg('warning', `🟠 ${position} (${tireMakeModel}) min ${minSurco.toFixed(1)} mm → monitorear, próximo a reemplazo.`));
+        else if (minSurco < 8.0) reviewMessages.push(msg('info', `🔵 ${position} (${tireMakeModel}) ${minSurco.toFixed(1)} mm → buen estado, programar rotación.`));
+        if (diff > 2.0) reviewMessages.push(msg('alert', `🚨 Desgaste irregular en ${position}. Δ ${diff.toFixed(1)} mm → revisar **alineación y presión**.`));
+        if (position === 'Repuesto' && minSurco < 10.0) reviewMessages.push(msg('warning', `🔧 Repuesto con ${minSurco.toFixed(1)} mm → considerar uso/renovación.`));
+      });
+
+      if (dataError) { finishReview(btn); return displayReview(reviewMessages); }
+      if (reviewMessages.length === 0) reviewMessages.push(msg('success','✅ Evaluación OK. Listo para guardar.'));
+
+      window.pendingReviewData = data;
+      document.getElementById('saveButton').disabled = false;
+      finishReview(btn);
+      displayReview(reviewMessages);
+      window.displayMessage('Revisión completa. Presiona "Guardar".','success');
+    }
+
+    function msg(type, text){ return { type, text }; }
+    function loaderSvg(label){ return `<svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white inline" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> ${label}`; }
+    function finishReview(btn){ btn.disabled = false; btn.innerHTML = 'Evaluar Medición'; }
+
+    function displayReview(messages){
+      const reviewContainer = document.getElementById('reviewFeedback');
+      let html = '';
+      messages.forEach(m => {
+        let classes = 'p-3 rounded-lg text-sm mb-2 shadow-sm ';
+        if (m.type === 'alert') classes += 'bg-red-100 text-red-800 border-red-300 border-l-4';
+        else if (m.type === 'warning') classes += 'bg-yellow-100 text-yellow-800 border-yellow-300 border-l-4';
+        else if (m.type === 'success') classes += 'bg-green-100 text-green-800 border-green-300 border-l-4 font-bold';
+        else if (m.type === 'info') classes += 'bg-blue-100 text-blue-800 border-blue-300 border-l-4';
+        else if (m.type === 'error') classes += 'bg-gray-200 text-gray-800 border-red-500 border-l-4 font-bold';
+        html += `<div class="${classes}">${m.text}</div>`;
+      });
+      reviewContainer.innerHTML = html;
+    }
+
+    window.handleSave = async function(){
+      const data = window.pendingReviewData;
+      if (!data) return window.displayMessage('Evalúa antes de guardar','error');
+      const saveBtn = document.getElementById('saveButton');
+      saveBtn.disabled = true; saveBtn.innerHTML = loaderSvg('Guardando...');
+      try {
+        const uploaded = await Promise.all((data.photoFiles||[]).map(async it => ({ position: it.position, url: await uploadPhoto(it.file, it.position) })));
+        data.tires = data.tires.map(t => { const f = uploaded.find(u => u.position === t.position); return { ...t, photoURL: f ? f.url : t.photoURL }; });
+        const { photoFiles, ...finalRecord } = { ...data, timestamp: serverTimestamp() };
+        const recordsRef = collection(db, `/artifacts/${appId}/public/data/tire_records`);
+        await addDoc(recordsRef, finalRecord);
+        window.displayMessage('✅ Registro guardado con éxito','success');
+        document.getElementById('registrationForm').reset();
+        document.getElementById('tireInputsContainer').innerHTML = '';
+        document.getElementById('reviewFeedback').innerHTML = '';
+        window.pendingReviewData = null;
+        document.getElementById('reviewButton').disabled = true;
+      } catch (e) {
+        console.error('Guardar error', e);
+        window.displayMessage(`❌ Error al guardar: ${e.message}`,'error');
+      } finally {
+        saveBtn.disabled = false; saveBtn.innerHTML = 'Guardar Registro';
+      }
+    }
+
+    window.displayMessage = function(message, type='info'){
+      const container = document.getElementById('appMessage');
+      let classes = 'p-3 rounded-lg text-sm mb-4 font-medium shadow-md transition-opacity duration-300';
+      classes += (type==='success') ? ' bg-green-500 text-white' : (type==='error' ? ' bg-red-500 text-white' : ' bg-blue-500 text-white');
+      container.className = classes;
+      container.textContent = message;
+      container.classList.remove('opacity-0','hidden');
+      setTimeout(()=>{ container.classList.add('opacity-0'); setTimeout(()=> container.classList.add('hidden'), 300); }, 5000);
+    }
+
+    function updateRandomRecommendation(){
+      const tip = longevityTips[Math.floor(Math.random()*longevityTips.length)];
+      document.getElementById('randomTip').innerHTML = tip.replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>');
+    }
+
+    function displayRecords(records){
+      const container = document.getElementById('recordsTableBody');
+      container.innerHTML = '';
+      if (!records.length) { container.innerHTML = `<tr><td colspan=\"7\" class=\"text-center py-4 text-gray-500\">No hay registros para ${currentUserLabel || '-'} (${currentUserId || '-'}).</td></tr>`; return; }
+      records.forEach(record => {
+        const dateStr = record.date ? new Date(record.date).toLocaleDateString('es-CL') : '-';
+        const minSurco = (record.tires||[]).reduce((min, t)=> Math.min(min, t.surco1, t.surco2, t.surco3), 99);
+        const criticalClass = minSurco < 3.0 ? 'bg-red-100 text-red-800 font-bold' : (minSurco < 5.0 ? 'bg-yellow-100 text-yellow-800' : 'text-gray-700');
+        const tireDetails = (record.tires||[]).map(t => `${t.position}: ${Math.min(t.surco1, t.surco2, t.surco3).toFixed(1)}mm`).join(', ');
+        const row = `
+          <tr class=\"border-b hover:bg-gray-50 transition\">
+            <td class=\"px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900\">${record.orderNumber}</td>
+            <td class=\"px-4 py-3 whitespace-nowrap text-sm text-gray-500\">${record.vehicleType}</td>
+            <td class=\"px-4 py-3 whitespace-nowrap text-sm text-gray-500\">${(record.mileage||0).toLocaleString('es-CL')} km</td>
+            <td class=\"px-4 py-3 whitespace-nowrap text-sm text-gray-500\">${dateStr}</td>
+            <td class=\"px-4 py-3 whitespace-normal text-xs text-gray-600\">${tireDetails}</td>
+            <td class=\"px-4 py-3 whitespace-nowrap text-sm ${criticalClass}\">${Number.isFinite(minSurco)?minSurco.toFixed(1):'-'} mm</td>
+            <td class=\"px-4 py-3 whitespace-nowrap text-right text-sm font-medium\">
+              <button onclick=\"window.analyzeRecord('${record.id}')\" class=\"text-primary hover:text-secondary p-2 rounded-full transition\"><span class=\"text-lg\">✨</span> Analizar</button>
+            </td>
+          </tr>`;
+        container.insertAdjacentHTML('beforeend', row);
+      });
+    }
+
+    window.exportToCsv = function(){
+      if (!window.currentRecords.length) return window.displayMessage('No hay datos para exportar','error');
+      let csv = "data:text/csv;charset=utf-8,";
+      const baseHeaders = ["Orden","Kilometraje","Fecha","Tipo Vehículo","Marca General","Medida","Comentarios","Técnico"];
+      const superset = Array.from(new Set(Object.values(TIRES_STRUCTURE).flat()));
+      const tireHeaders = superset.flatMap(pos => [
+        `Posicion_${pos}_Modelo`,`Posicion_${pos}_Surco1`,`Posicion_${pos}_Surco2`,`Posicion_${pos}_Surco3`,`Posicion_${pos}_FotoURL`
+      ]);
+      const headers = baseHeaders.concat(tireHeaders);
+      csv += headers.join(";") + "\r\n";
+
+      window.currentRecords.forEach(record => {
+        const row = [
+          record.orderNumber,
+          record.mileage,
+          record.date,
+          record.vehicleType,
+          record.generalMakeModel,
+          record.tireSize,
+          `"${(record.generalComments||'').replace(/"/g,'""')}"`,
+          record.technicianId
+        ];
+        const tMap = (record.tires||[]).reduce((acc,t)=>{ acc[t.position]=t; return acc; },{});
+        superset.forEach(pos => {
+          const t = tMap[pos];
+          row.push(t ? t.makeModel : '');
+          row.push(t ? t.surco1 : '');
+          row.push(t ? t.surco2 : '');
+          row.push(t ? t.surco3 : '');
+          row.push(t ? (t.photoURL==='N/A'?'':t.photoURL) : '');
+        });
+        csv += row.join(";") + "\r\n";
+      });
+
+      const uri = encodeURI(csv);
+      const a = document.createElement('a');
+      a.href = uri; a.download = `registros_neumaticos_${currentUserId}_${Date.now()}.csv`;
+      document.body.appendChild(a); a.click(); a.remove();
+      window.displayMessage('Exportación lista (CSV)','success');
+    }
+
+    // === LOGIN UI ===
+    function showLogin(){ document.getElementById('login-modal').classList.add('show'); }
+    function hideLogin(){ document.getElementById('login-modal').classList.remove('show'); }
+
+    window.handleLogin = function(e){
+      e?.preventDefault();
+      const userSel = document.getElementById('loginUser').value;
+      const pass = document.getElementById('loginPass').value;
+      if (!userSel || !pass) return window.displayMessage('Completa usuario y contraseña','error');
+      if (pass !== PASSWORD) return window.displayMessage('Contraseña incorrecta','error');
+      currentUserLabel = userSel;
+      currentUserId = USER_TO_ID[userSel];
+      localStorage.setItem('tire_user_label', currentUserLabel);
+      localStorage.setItem('tire_user_id', currentUserId);
+      document.getElementById('userIdDisplay').textContent = `${currentUserLabel} (${currentUserId})`;
+      hideLogin();
+      loadRecords();
+      window.switchTab('guide');
+    }
+
+    window.handleLogout = function(){
+      localStorage.removeItem('tire_user_label');
+      localStorage.removeItem('tire_user_id');
+      currentUserId = null; currentUserLabel = null;
+      document.getElementById('userIdDisplay').textContent = 'No autenticado';
+      showLogin();
+      if (typeof unsubscribe === 'function') { unsubscribe(); }
+      displayRecords([]);
+    }
+
+    // === INIT ===
+    window.onload = function(){
+      // fecha por defecto
+      const dateEl = document.getElementById('date');
+      if (dateEl) dateEl.value = new Date().toISOString().slice(0,10);
+
+      initializeFirebase().then(() => {
+        // combos
+        const makeModelSelect = document.getElementById('makeModel');
+        const tireSizeSelect = document.getElementById('tireSize');
+        PREDEFINED_MODELS.forEach(m => makeModelSelect.insertAdjacentHTML('beforeend', `<option value="${m}">${m}</option>`));
+        PREDEFINED_SIZES.forEach(s => tireSizeSelect.insertAdjacentHTML('beforeend', `<option value="${s}">${s}</option>`));
+
+        // restaurar sesión
+        const savedLabel = localStorage.getItem('tire_user_label');
+        const savedId = localStorage.getItem('tire_user_id');
+        if (savedLabel && savedId) {
+          currentUserLabel = savedLabel; currentUserId = savedId;
+          document.getElementById('userIdDisplay').textContent = `${currentUserLabel} (${currentUserId})`;
+          loadRecords();
+          window.switchTab('guide');
+        } else {
+          document.getElementById('userIdDisplay').textContent = 'No autenticado';
+          showLogin();
+        }
+      });
+    }
+  </script>
+</head>
+
+<body class="bg-background">
+  <!-- Modal Análisis IA -->
+  <div id="analysis-modal" role="dialog" aria-modal="true" aria-labelledby="analysisTitle">
+    <div id="analysis-modal-card" class="modal-content w-full sm:w-11/12 md:w-2/3 lg:w-1/2">
+      <div class="flex justify-between items-center mb-4 pb-2 border-b">
+        <h2 id="analysisTitle" class="text-xl font-bold text-primary">Analizando...</h2>
+        <button id="analysisCloseButton" onclick="window.closeAnalysisModal()" class="text-gray-400 hover:text-gray-600" aria-label="Cerrar">
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+        </button>
+      </div>
+      <div id="analysisContent" class="py-4 text-sm"></div>
+    </div>
+  </div>
+
+  <!-- Modal Login -->
+  <div id="login-modal" aria-modal="true" role="dialog" aria-labelledby="loginTitle">
+    <div class="modal-content w-full sm:w-11/12 md:w-2/3 lg:w-1/3">
+      <h2 id="loginTitle" class="text-xl font-bold text-primary mb-4">Iniciar sesión</h2>
+      <form onsubmit="window.handleLogin(event)" class="space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1" for="loginUser">Usuario</label>
+          <select id="loginUser" class="form-control" required>
+            <option value="" disabled selected>Selecciona...</option>
+            <option>Copiapó</option>
+            <option>Vallenar</option>
+            <option>Santiago</option>
+            <option>Viña del Mar</option>
+            <option>Casa Matriz</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1" for="loginPass">Contraseña</label>
+          <input id="loginPass" type="password" class="form-control" placeholder="••••••••" required />
+          <p class="text-xs text-gray-500 mt-1">Pista: FlotaVerschae.,</p>
+        </div>
+        <div class="flex items-center justify-end space-x-2">
+          <button type="button" onclick="window.handleLogout()" class="px-3 py-2 text-sm rounded-lg border">Limpiar sesión</button>
+          <button type="submit" class="bg-primary text-white px-4 py-2 rounded-lg hover:bg-secondary">Entrar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- App -->
+  <div id="app-container" class="min-h-screen flex flex-col">
+    <header class="bg-white shadow-md sticky top-0 z-10">
+      <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex justify-between items-center">
+        <h1 class="text-2xl font-extrabold text-primary flex items-center">
+          <svg class="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 18.75V3m0 15v-6m0 6l3.75-3.75M12 18.75l-3.75-3.75M4.5 9h15"></path></svg>
+          Control de Neumáticos
+        </h1>
+        <div class="flex items-center space-x-4">
+          <p class="text-sm text-gray-600">Técnico: <span id="userIdDisplay" class="font-semibold text-primary">Cargando...</span></p>
+          <button onclick="window.handleLogout()" class="text-xs px-2 py-1 rounded border">Salir</button>
+        </div>
+      </div>
+      <nav class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 flex border-b">
+        <button id="tab-button-guide" onclick="window.switchTab('guide')" class="tab-button active flex-1 py-3 text-sm text-gray-500 hover:text-primary">Guía & Tips</button>
+        <button id="tab-button-register" onclick="window.switchTab('register')" class="tab-button flex-1 py-3 text-sm text-gray-500 hover:text-primary">Registro</button>
+        <button id="tab-button-records" onclick="window.switchTab('records')" class="tab-button flex-1 py-3 text-sm text-gray-500 hover:text-primary">Ver Registros</button>
+      </nav>
+    </header>
+
+    <main class="flex-grow max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      <div id="appMessage" class="hidden opacity-0" role="alert" aria-live="polite"></div>
+
+      <!-- Pestaña Guía -->
+      <div id="tab-content-guide" class="space-y-6">
+        <div class="bg-white p-6 rounded-xl shadow-lg border border-gray-100">
+          <h2 class="text-2xl font-bold text-primary mb-4">Guía Rápida de la Aplicación</h2>
+          <ul class="list-disc list-inside space-y-3 text-gray-700 text-sm">
+            <li><strong>Usuario:</strong> login simple por sede; los registros quedan filtrados por técnico.</li>
+            <li><strong>Registro:</strong> elige el tipo de vehículo para cargar las posiciones.</li>
+            <li><strong>Medición:</strong> registra 3 puntos (interior/centro/exterior) en mm.</li>
+            <li><strong>Evaluar:</strong> comentarios automáticos (alineación, presión, crítico).</li>
+            <li><strong>Guardar:</strong> sube datos a Firestore y fotos a Storage.</li>
+            <li><strong>IA:</strong> en “Ver Registros”, botón ✨ para informe experto.</li>
+          </ul>
+        </div>
+        <div class="bg-white p-6 rounded-xl shadow-lg border border-gray-100">
+          <h2 class="text-2xl font-bold text-primary mb-4">Recomendaciones para Lectura Precisa</h2>
+          <ul class="list-disc list-inside space-y-3 text-gray-700 text-sm">
+            <li><strong>Limpieza:</strong> retira piedras/barro antes de medir.</li>
+            <li><strong>Posición:</strong> surco principal con menor profundidad.</li>
+            <li><strong>Puntos:</strong> tres lecturas a lo ancho de la banda.</li>
+            <li><strong>Precisión:</strong> base plana; vástago perpendicular.</li>
+          </ul>
+        </div>
+        <div class="bg-primary/10 p-6 rounded-xl shadow-lg border border-primary/20">
+          <h2 class="text-xl font-bold text-primary mb-4">✨ Recomendación aleatoria</h2>
+          <p id="randomTip" class="text-gray-700 text-lg italic"></p>
+        </div>
+      </div>
+
+      <!-- Pestaña Registro -->
+      <div id="tab-content-register" class="hidden">
+        <form id="registrationForm" onsubmit="return false" class="space-y-6">
+          <div class="bg-white p-6 rounded-xl shadow-lg space-y-4">
+            <h3 class="text-xl font-semibold text-primary border-b pb-2">Datos de la Inspección</h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label for="orderNumber" class="block text-sm font-medium text-gray-700">Número de Orden</label>
+                <input type="number" id="orderNumber" name="orderNumber" class="form-control" required />
+              </div>
+              <div>
+                <label for="mileage" class="block text-sm font-medium text-gray-700">Kilometraje (km)</label>
+                <input type="number" id="mileage" name="mileage" class="form-control" required />
+              </div>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label for="date" class="block text-sm font-medium text-gray-700">Fecha</label>
+                <input type="date" id="date" name="date" class="form-control" required />
+              </div>
+              <div>
+                <label for="vehicleType" class="block text-sm font-medium text-gray-700">Tipo de Vehículo</label>
+                <select id="vehicleType" name="vehicleType" class="form-control" onchange="window.generateTireInputs()" required>
+                  <option value="" disabled selected>Selecciona tipo...</option>
+                  <option value="Bus">Bus</option>
+                  <option value="Taxibus">Taxibus</option>
+                  <option value="Minibús">Minibús</option>
+                  <option value="Minibús DR (Doble Rodado)">Minibús DR (Doble Rodado)</option>
+                  <option value="Camioneta">Camioneta</option>
+                </select>
+              </div>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label for="tireSize" class="block text-sm font-medium text-gray-700">Medida de Neumático (General)</label>
+                <select id="tireSize" name="tireSize" class="form-control" required>
+                  <option value="" disabled selected>Selecciona medida...</option>
+                </select>
+              </div>
+              <div>
+                <label for="makeModel" class="block text-sm font-medium text-gray-700">Marca y Modelo (General)</label>
+                <select id="makeModel" name="makeModel" class="form-control" required>
+                  <option value="" disabled selected>Selecciona marca/modelo...</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div id="tireInputsContainer" class="mt-6">
+            <div class="bg-gray-100 p-4 rounded-xl text-gray-600 text-center">Selecciona el <strong>Tipo de Vehículo</strong> para cargar las posiciones.</div>
+          </div>
+
+          <div class="bg-white p-6 rounded-xl shadow-lg">
+            <label for="generalComments" class="block text-sm font-medium text-gray-700 mb-1">Comentarios Generales (Máx. 100 caracteres)</label>
+            <textarea id="generalComments" name="generalComments" rows="2" maxlength="100" class="form-control" placeholder="Notas sobre el estado general del vehículo o neumáticos..."></textarea>
+            <div class="text-xs text-gray-500 mt-1"><span id="commentLength">0</span>/100 caracteres.</div>
+          </div>
+
+          $1
+            <div id="reviewFeedback" class="space-y-2"></div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <button type="button" id="re
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
