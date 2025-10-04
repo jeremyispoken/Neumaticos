@@ -44,8 +44,8 @@
             box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.5);
             outline: none;
         }
-        /* Estilo para el modal de login */
-        #login-modal, #analysis-modal {
+        /* Estilo para el modal de análisis */
+        #analysis-modal {
             position: fixed;
             top: 0;
             left: 0;
@@ -90,28 +90,19 @@
         let db = null;
         let auth = null; 
         let storage = null;
-        let currentUserId = null; // Almacenará el ID de la ciudad (copiapo, santiago, etc.)
+        
+        // ** USUARIO POR DEFECTO: El login se ha omitido por solicitud del usuario **
+        let currentUserId = 'copiapo'; 
+        const defaultUserDisplay = 'Copiapó (Default)';
+        // ------------------------------------------------------------------------
+
         window.currentRecords = []; // Variable global para acceder a los registros desde analyzeRecord
 
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
         const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
-        // Credenciales fijas según la solicitud del usuario
-        const USER_CREDENTIALS = {
-            'copiapo': { password: 'FlotaVerschae.', displayName: 'Copiapó' },
-            'vallenar': { password: 'FlotaVerschae.', displayName: 'Vallenar' },
-            'santiago': { password: 'FlotaVerschae.', displayName: 'Santiago' },
-            'vina_del_mar': { password: 'FlotaVerschae.', displayName: 'Viña del Mar' }
-        };
-        const USER_OPTIONS = [
-            { id: 'copiapo', name: 'Copiapó' },
-            { id: 'vallenar', name: 'Vallenar' },
-            { id: 'santiago', name: 'Santiago' },
-            { id: 'vina_del_mar', name: 'Viña del Mar' }
-        ];
-
-
+        // Estructura de neumáticos según tipo de vehículo y posición
         const TIRES_STRUCTURE = {
             'Bus': ['I1', 'D1', 'I2', 'D2', 'I3', 'D3', 'Repuesto'],
             'Taxibus': ['I1', 'D1', 'I2', 'D2', 'I3', 'D3', 'Repuesto'],
@@ -142,7 +133,7 @@
             "Limpia los neumáticos y llantas regularmente. La suciedad y químicos pueden deteriorar el caucho con el tiempo."
         ];
         
-        // --- FUNCIONES DE FIREBASE (Adaptadas para usar currentUserId) ---
+        // --- FUNCIONES DE FIREBASE ---
 
         async function initializeFirebase() {
             if (!firebaseConfig) {
@@ -195,66 +186,29 @@
                 window.currentRecords = records.sort((a, b) => (b.orderNumber || 0) - (a.orderNumber || 0));
                 displayRecords(window.currentRecords);
             }, (error) => {
-                // El error de permisos ahora debería resolverse con la nueva lógica de autenticación
                 console.error("Error al obtener los registros en tiempo real:", error);
             });
         }
 
-        // --- FUNCIONES DE AUTENTICACIÓN PERSONALIZADA ---
-        
-        // Maneja el intento de inicio de sesión
-        window.handleLogin = function(event) {
-            event.preventDefault();
-            const cityId = document.getElementById('loginCity').value;
-            const password = document.getElementById('loginPassword').value;
-            const loginMessage = document.getElementById('loginMessage');
-            
-            loginMessage.textContent = '';
-
-            const user = USER_CREDENTIALS[cityId];
-
-            if (user && user.password === password) {
-                currentUserId = cityId;
-                sessionStorage.setItem('loggedUserId', cityId);
-                sessionStorage.setItem('loggedUserDisplay', user.displayName);
-                
-                document.getElementById('userIdDisplay').textContent = `${user.displayName} (${currentUserId})`;
-                document.getElementById('login-modal').classList.add('hidden');
-                document.getElementById('app-container').classList.remove('hidden');
-                loadRecords(); // Iniciar la carga de datos del usuario
-            } else {
-                loginMessage.textContent = '❌ Credenciales incorrectas. Verifique la ciudad y la contraseña.';
-                loginMessage.classList.remove('text-green-600');
-                loginMessage.classList.add('text-red-600');
+        /**
+         * Sube una foto a Firebase Storage y devuelve la URL.
+         * @param {File} file - Objeto File de la foto.
+         * @param {string} position - Posición del neumático (I1, D1, etc.).
+         * @returns {Promise<string>} - URL de descarga de la foto.
+         */
+        async function uploadPhoto(file, position) {
+            if (!storage || !currentUserId) {
+                throw new Error("Storage o ID de usuario no disponible.");
             }
+            const fileExtension = file.name.split('.').pop();
+            const fileName = `${currentUserId}_${position}_${Date.now()}.${fileExtension}`;
+            const storageRef = ref(storage, `tire_photos/${currentUserId}/${fileName}`);
+
+            await uploadBytes(storageRef, file);
+            return getDownloadURL(storageRef);
         }
 
-        // Verifica si ya hay una sesión guardada
-        function checkLoginState() {
-            const savedUserId = sessionStorage.getItem('loggedUserId');
-            const savedUserDisplay = sessionStorage.getItem('loggedUserDisplay');
-
-            if (savedUserId && savedUserDisplay) {
-                currentUserId = savedUserId;
-                document.getElementById('userIdDisplay').textContent = `${savedUserDisplay} (${currentUserId})`;
-                document.getElementById('login-modal').classList.add('hidden');
-                document.getElementById('app-container').classList.remove('hidden');
-                loadRecords();
-            } else {
-                // Mostrar el modal si no hay sesión
-                document.getElementById('login-modal').classList.remove('hidden');
-                document.getElementById('app-container').classList.add('hidden');
-            }
-        }
-
-        window.handleLogout = function() {
-            sessionStorage.removeItem('loggedUserId');
-            sessionStorage.removeItem('loggedUserDisplay');
-            currentUserId = null;
-            window.location.reload(); // Recargar para mostrar el modal de login
-        }
-
-        // --- FUNCIONES DE ANÁLISIS GEMINI (NUEVO) ---
+        // --- FUNCIONES DE ANÁLISIS GEMINI ---
 
         /**
          * Realiza una llamada a la API de Gemini para analizar un registro.
@@ -373,18 +327,20 @@
             const modal = document.getElementById('analysis-modal');
             const contentDiv = document.getElementById('analysisContent');
             const titleDiv = document.getElementById('analysisTitle');
+            const closeButton = document.getElementById('analysisCloseButton'); // Botón de cerrar
 
             if (show) {
                 titleDiv.textContent = `Analizando Registro N° ${orderNumber}...`;
-                contentDiv.innerHTML = `
-                    <div class="flex flex-col items-center justify-center p-8">
-                        <svg class="animate-spin h-8 w-8 text-primary" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                        </svg>
-                        <p class="mt-4 text-gray-600 font-medium">Generando análisis experto con Gemini...</p>
-                    </div>
+                contentDiv.innerHTML = `<br>
+                    <div class="flex flex-col items-center justify-center p-8"><br>
+                        <svg class="animate-spin h-8 w-8 text-primary" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><br>
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><br>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path><br>
+                        </svg><br>
+                        <p class="mt-4 text-gray-600 font-medium">Generando análisis experto con Gemini...</p><br>
+                    </div><br>
                 `;
+                closeButton.classList.add('hidden'); // Ocultar el botón de cerrar durante la carga
                 modal.classList.remove('hidden');
             } else if (analysisText) {
                 // Mostrar resultado
@@ -401,10 +357,12 @@
                 }
                 
                 contentDiv.innerHTML = html;
+                closeButton.classList.remove('hidden'); // Mostrar botón de cerrar después del análisis
             } else {
                 // Ocultar modal (usado después de un error o al cerrar)
                 modal.classList.add('hidden');
                 contentDiv.innerHTML = '';
+                closeButton.classList.remove('hidden'); 
             }
         }
 
@@ -412,7 +370,7 @@
 
         window.switchTab = function(tabName) {
             if (!currentUserId) {
-                 window.displayMessage('Debes iniciar sesión para acceder a las pestañas.', 'error');
+                 window.displayMessage('Error interno: ID de usuario no establecido.', 'error');
                  return;
             }
             
@@ -428,8 +386,9 @@
             } else if (tabName === 'register') {
                 document.getElementById('reviewFeedback').innerHTML = '';
                 document.getElementById('saveButton').disabled = true;
-                // No necesitamos pendingReviewData global si no usamos fotos, pero lo mantenemos por consistencia
-                // pendingReviewData = null; 
+                // Reiniciar el formulario
+                document.getElementById('registrationForm').reset();
+                document.getElementById('tireInputsContainer').innerHTML = '';
             }
         }
 
@@ -484,6 +443,8 @@
                 `;
                 container.insertAdjacentHTML('beforeend', html);
             });
+            // Habilitar el botón de revisión si hay inputs generados
+            document.getElementById('reviewButton').disabled = false;
         }
 
         function getPositionDescription(pos) {
@@ -508,7 +469,7 @@
             let reviewMessages = [];
 
             if (!currentUserId) {
-                window.displayMessage('Error: Debes iniciar sesión antes de evaluar.', 'error');
+                window.displayMessage('Error: ID de técnico no establecido. Intenta recargar la página.', 'error');
                 return;
             }
 
@@ -516,7 +477,7 @@
             btn.innerHTML = '<svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-gray-900" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Evaluando...';
             saveBtn.disabled = true;
             reviewContainer.innerHTML = '';
-            window.pendingReviewData = null; // Usar window para acceder a ella si es necesario en otras funciones
+            window.pendingReviewData = null; 
 
             if (!db) {
                 reviewMessages.push({ type: 'error', text: 'Error: Base de datos no lista. Intenta nuevamente.' });
@@ -548,7 +509,7 @@
                 vehicleType: vehicleType,
                 generalMakeModel: generalMakeModel,
                 generalComments: generalComments,
-                technicianId: currentUserId, // Usamos el ID de la ciudad
+                technicianId: currentUserId, // Usamos el ID de la ciudad por defecto
                 tires: [],
                 photoFiles: [] 
             };
@@ -580,6 +541,7 @@
                 const surcos = [surco1, surco2, surco3];
                 const minSurco = Math.min(...surcos);
                 const maxSurco = Math.max(...surcos);
+                const diff = maxSurco - minSurco;
 
                 data.tires.push({
                     position: position,
@@ -589,7 +551,7 @@
                     surco2: surco2,
                     surco3: surco3,
                     minSurco: minSurco,
-                    photoURL: 'N/A' 
+                    photoURL: 'N/A' // Placeholder
                 });
                 
                 if (photoFile) {
@@ -604,533 +566,543 @@
                 if (minSurco < 3.0) {
                     reviewMessages.push({ 
                         type: 'alert', 
-                        text: `⚠️ **¡ATENCIÓN!** Neumático ${position} tiene surco de ${minSurco.toFixed(1)} mm. Reemplazo inmediato obligatorio.` 
+                        text: `⚠️ **¡ATENCIÓN!** Neumático ${position} (${tireMakeModel}) tiene un surco mínimo de **${minSurco.toFixed(1)} mm**. **REEMPLAZO OBLIGATORIO** (Límite legal de la flota: 3.0 mm).` 
                     });
                     criticalFound = true;
                 } else if (minSurco < 5.0) {
                     reviewMessages.push({ 
                         type: 'warning', 
-                        text: `🟡 Neumático ${position} (${tireMakeModel}) con surco bajo (${minSurco.toFixed(1)} mm). Monitoreo semanal o reencauche/reemplazo pronto.` 
+                        text: `🟠 Neumático ${position} (${tireMakeModel}) tiene un surco mínimo de ${minSurco.toFixed(1)} mm. Monitoreo constante, próximo a reemplazo.` 
+                    });
+                } else if (minSurco < 8.0) {
+                     reviewMessages.push({ 
+                        type: 'info', 
+                        text: `🔵 Neumático ${position} (${tireMakeModel}) con desgaste moderado (${minSurco.toFixed(1)} mm). Buen estado, programar rotación.` 
                     });
                 }
 
-                const unevenness = maxSurco - minSurco;
-                if (unevenness > 2.0 && minSurco >= 3.0) {
+
+                if (diff > 2.0) {
+                    reviewMessages.push({ 
+                        type: 'alert', 
+                        text: `🚨 **DESGASTE IRREGULAR** en ${position} (${tireMakeModel}). Diferencia de ${diff.toFixed(1)} mm entre surcos. **Revisa Alineación y Presión inmediatamente.**` 
+                    });
+                }
+                
+                if (position.includes('Repuesto') && minSurco < 10.0) {
                     reviewMessages.push({ 
                         type: 'warning', 
-                        text: `🚨 Desgaste Irregular en ${position} (Diferencia de ${unevenness.toFixed(1)} mm). Revisar Alineación y/o Suspensión.` 
-                    });
-                } else if (unevenness > 1.0 && minSurco >= 3.0) {
-                     reviewMessages.push({ 
-                        type: 'info', 
-                        text: `🔸 Variación notable en ${position}. Considerar verificar la presión de inflado.` 
+                        text: `🔧 El Neumático de **Repuesto** tiene ${minSurco.toFixed(1)} mm. Considera pasarlo a la flota activa o reemplazarlo si es necesario.` 
                     });
                 }
             });
-            
+
             if (dataError) {
-                 reviewMessages.push({ type: 'error', text: '🔴 **ERROR DE DATOS:** Por favor, corrige las entradas inválidas antes de continuar.' });
-            } else if (reviewMessages.length === 0) {
-                reviewMessages.push({ type: 'success', text: '✅ **Evaluación Exitosa.** Todos los neumáticos cumplen con los límites críticos. Listo para Guardar.' });
-            } else if (criticalFound) {
-                 reviewMessages.push({ type: 'alert', text: '🔴 **ACCIÓN REQUERIDA:** Se encontraron neumáticos en estado CRÍTICO. Proceder con el reemplazo antes de poner el vehículo en servicio.' });
+                btn.disabled = false;
+                btn.innerHTML = 'Evaluar Medición';
+                displayReview(reviewMessages);
+                return;
             }
 
+            if (reviewMessages.length === 0) {
+                reviewMessages.push({ type: 'success', text: '✅ **Evaluación OK.** Todos los neumáticos están en buen estado y desgaste uniforme. Listo para guardar.' });
+            }
+
+            // Si la revisión es exitosa, guardar datos pendientes y habilitar el botón de guardar.
             window.pendingReviewData = data;
-            saveBtn.disabled = reviewMessages.some(m => m.type === 'error');
-            
+            saveBtn.disabled = false;
             btn.disabled = false;
             btn.innerHTML = 'Evaluar Medición';
+            
             displayReview(reviewMessages);
+            window.displayMessage('Revisión completada. Presiona "Guardar" para finalizar el registro.', 'success');
+        }
+
+        function displayReview(messages) {
+            const reviewContainer = document.getElementById('reviewFeedback');
+            let html = '';
+            messages.forEach(msg => {
+                let classes = 'p-3 rounded-lg text-sm mb-2 shadow-sm ';
+                if (msg.type === 'alert') {
+                    classes += 'bg-red-100 text-red-800 border-red-300 border-l-4';
+                } else if (msg.type === 'warning') {
+                    classes += 'bg-yellow-100 text-yellow-800 border-yellow-300 border-l-4';
+                } else if (msg.type === 'success') {
+                    classes += 'bg-green-100 text-green-800 border-green-300 border-l-4 font-bold';
+                } else if (msg.type === 'info') {
+                    classes += 'bg-blue-100 text-blue-800 border-blue-300 border-l-4';
+                } else if (msg.type === 'error') {
+                    classes += 'bg-gray-200 text-gray-800 border-red-500 border-l-4 font-bold';
+                }
+                
+                html += `<div class="${classes}">${msg.text}</div>`;
+            });
+            reviewContainer.innerHTML = html;
         }
 
         window.handleSave = async function() {
-            if (!window.pendingReviewData || window.pendingReviewData.tires.length === 0) {
-                window.displayMessage('Error: Debes realizar la evaluación primero.', 'error');
+            const data = window.pendingReviewData;
+            if (!data) {
+                window.displayMessage('Error: Debes evaluar la medición antes de guardar.', 'error');
                 return;
             }
-            if (!storage || !currentUserId) {
-                window.displayMessage('Error: Almacenamiento no disponible o no has iniciado sesión.', 'error');
-                return;
-            }
-
+            
             const saveBtn = document.getElementById('saveButton');
-            const reviewBtn = document.getElementById('reviewButton');
             saveBtn.disabled = true;
-            reviewBtn.disabled = true;
-            saveBtn.innerHTML = '<svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Subiendo Fotos y Guardando...';
+            saveBtn.innerHTML = '<svg class="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Guardando...';
 
-            const { tires, photoFiles, ...recordData } = window.pendingReviewData;
 
             try {
-                // 1. Subir Fotos a Firebase Storage
-                for (const photoItem of photoFiles) {
-                    const file = photoItem.file;
-                    const position = photoItem.position;
-                    const timestamp = new Date().getTime();
-                    // Ruta de Storage: artifacts/appId/users/techId/posicion_timestamp
-                    // Usamos el ID del técnico (cityId) en la ruta de storage, no el UID de Firebase Auth.
-                    const storagePath = `artifacts/${appId}/users/${currentUserId}/${position}_${timestamp}`;
-                    
-                    const storageRef = ref(storage, storagePath);
-                    
-                    // Subida del archivo
-                    const uploadResult = await uploadBytes(storageRef, file);
-                    // Obtener la URL pública
-                    const downloadURL = await getDownloadURL(uploadResult.ref);
-                    
-                    // Asignar la URL al neumático correspondiente en los datos
-                    const tireToUpdate = tires.find(t => t.position === position);
-                    if (tireToUpdate) {
-                        tireToUpdate.photoURL = downloadURL;
+                // 1. Subir las fotos a Firebase Storage
+                const photoUploadPromises = data.photoFiles.map(async item => {
+                    const url = await uploadPhoto(item.file, item.position);
+                    return { position: item.position, url: url };
+                });
+
+                const uploadedPhotos = await Promise.all(photoUploadPromises);
+
+                // 2. Actualizar las URLs de las fotos en el objeto principal
+                data.tires = data.tires.map(tire => {
+                    const photo = uploadedPhotos.find(p => p.position === tire.position);
+                    if (photo) {
+                        tire.photoURL = photo.url;
                     }
-                }
+                    // Eliminar campos temporales innecesarios para Firestore
+                    delete tire.minSurco; 
+                    delete tire.description;
+                    return tire;
+                });
 
-                // 2. Guardar el Registro completo (con URLs) en Firestore
+                // 3. Crear el objeto final para Firestore (sin los archivos de fotos)
                 const finalRecord = {
-                    ...recordData,
-                    tires: tires,
-                    createdAt: serverTimestamp(),
-                    photoCount: photoFiles.length 
+                    ...data,
+                    timestamp: serverTimestamp(),
                 };
+                delete finalRecord.photoFiles;
 
-                // Guardar en la COLECCIÓN PÚBLICA, filtrada por technicianId
+                // 4. Guardar en Firestore
                 const recordsRef = collection(db, `/artifacts/${appId}/public/data/tire_records`);
                 await addDoc(recordsRef, finalRecord);
+
+                window.displayMessage('✅ Registro guardado con éxito y fotos subidas a Storage.', 'success');
                 
-                // Limpiar y resetear
+                // Limpiar formulario y estado
                 document.getElementById('registrationForm').reset();
-                window.generateTireInputs();
+                document.getElementById('tireInputsContainer').innerHTML = '';
                 document.getElementById('reviewFeedback').innerHTML = '';
                 window.pendingReviewData = null;
-                
-                window.displayMessage('Registro y fotos guardadas exitosamente en tu cuenta.', 'success');
-                window.switchTab('records');
+                document.getElementById('reviewButton').disabled = true;
 
-            } catch (error) {
-                console.error("Error al subir fotos o guardar registro:", error);
-                window.displayMessage(`Error crítico al guardar: ${error.message}. Verifica tu conexión o las reglas de Storage.`, 'error');
+            } catch (e) {
+                console.error("Error al guardar registro o subir fotos:", e);
+                window.displayMessage(`❌ Error al guardar: ${e.message}. Revisa la consola.`, 'error');
             } finally {
-                saveBtn.disabled = true;
+                saveBtn.disabled = false;
                 saveBtn.innerHTML = 'Guardar Registro';
-                reviewBtn.disabled = false;
-                reviewBtn.innerHTML = 'Evaluar Medición';
+                document.getElementById('reviewButton').innerHTML = 'Evaluar Medición';
             }
         }
 
-        // --- FUNCIONES DE UI ---
-
-        function displayReview(messages) {
-            const container = document.getElementById('reviewFeedback');
-            container.classList.remove('hidden');
-
-            const html = messages.map(msg => {
-                let icon = '';
-                let color = '';
-                switch (msg.type) {
-                    case 'success': icon = '✅'; color = 'bg-green-100 text-green-800 border-green-400'; break;
-                    case 'alert': icon = '🚨'; color = 'bg-red-100 text-red-800 border-red-400'; break;
-                    case 'warning': icon = '⚠️'; color = 'bg-yellow-100 text-yellow-800 border-yellow-400'; break;
-                    case 'error': icon = '❌'; color = 'bg-red-100 text-red-800 border-red-400'; break;
-                    case 'info': default: icon = 'ℹ️'; color = 'bg-blue-100 text-blue-800 border-blue-400';
-                }
-                return `<p class="p-2 border rounded-lg text-sm ${color}">${icon} ${msg.text}</p>`;
-            }).join('');
-
-            container.innerHTML = `<h3 class="text-xl font-bold mb-3 text-gray-700">Comentarios Técnicos</h3><div class="space-y-2">${html}</div>`;
-        }
-
-        window.displayMessage = function(message, type) {
-            const container = document.getElementById('messageContainer');
-            const color = type === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700';
-            container.innerHTML = `<div class="p-3 mb-4 rounded-lg text-sm ${color}">${message}</div>`;
-            setTimeout(() => { container.innerHTML = ''; }, 7000);
-        }
-
-        window.displayRecords = function(records) {
-            const tableBody = document.getElementById('recordsTableBody');
-            const recordsCount = document.getElementById('recordsCount');
-            if (!tableBody || !recordsCount) return;
-
-            recordsCount.textContent = `Total de Registros: ${records.length}`;
-            tableBody.innerHTML = '';
-
-            if (records.length === 0) {
-                tableBody.innerHTML = '<tr><td colspan="9" class="py-4 text-center text-gray-500">No hay registros guardados.</td></tr>';
-                return;
+        window.displayMessage = function(message, type = 'info') {
+            const container = document.getElementById('appMessage');
+            let classes = 'p-3 rounded-lg text-sm mb-4 font-medium shadow-md transition-opacity duration-300';
+            
+            if (type === 'success') {
+                classes += ' bg-green-500 text-white';
+            } else if (type === 'error') {
+                classes += ' bg-red-500 text-white';
+            } else {
+                classes += ' bg-blue-500 text-white';
             }
 
-            records.forEach((record, recordIndex) => {
-                const tireCount = record.tires.length;
-                let isFirstRow = true;
+            container.className = classes;
+            container.textContent = message;
+            container.classList.remove('opacity-0', 'hidden');
 
-                record.tires.forEach((tire, index) => {
-                    const row = document.createElement('tr');
-                    row.className = `border-b hover:bg-gray-50 text-sm ${recordIndex % 2 === 0 ? 'bg-white' : 'bg-gray-50'}`;
-
-                    if (isFirstRow) {
-                        row.innerHTML += `
-                            <td rowspan="${tireCount}" class="p-3 font-medium text-gray-900 border-r">${record.orderNumber}</td>
-                            <td rowspan="${tireCount}" class="p-3">${record.date}</td>
-                            <td rowspan="${tireCount}" class="p-3">${record.vehicleType} (${record.tireSize || 'N/A'})</td>
-                            <td rowspan="${tireCount}" class="p-3">${record.mileage.toLocaleString('es-CL')} km</td>
-                            <td rowspan="${tireCount}" class="p-3">${record.generalMakeModel}</td>
-                            <td rowspan="${tireCount}" class="p-3 text-center">${record.photoCount || 0} Fotos</td>
-                            <td rowspan="${tireCount}" class="p-3 text-center">
-                                <button onclick="window.analyzeRecord('${record.id}')" 
-                                    class="text-xs font-bold text-white bg-blue-500 hover:bg-blue-600 rounded-full px-3 py-1 transition shadow-md">
-                                    ✨ Analizar
-                                </button>
-                            </td>
-                        `;
-                        isFirstRow = false;
-                    }
-
-                    const minSurco = tire.minSurco || Math.min(tire.surco1, tire.surco2, tire.surco3);
-                    const statusClass = minSurco < 3 ? 'bg-red-100 text-red-600 font-bold' : (minSurco < 5 ? 'bg-yellow-100 text-yellow-700' : 'text-green-600');
-                    const photoIcon = tire.photoURL && tire.photoURL !== 'N/A' ? `<a href="${tire.photoURL}" target="_blank" class="text-blue-500 ml-2" title="Ver foto">📸</a>` : '';
-
-                    row.innerHTML += `
-                        <td class="p-3 font-medium">${tire.position}</td>
-                        <td class="p-3 text-center ${statusClass}">${minSurco.toFixed(1)} mm ${photoIcon}</td>
-                    `;
-                    tableBody.appendChild(row);
-                });
-            });
+            setTimeout(() => {
+                container.classList.add('opacity-0');
+                setTimeout(() => container.classList.add('hidden'), 300);
+            }, 5000);
         }
 
         window.updateRandomRecommendation = function() {
             const tip = longevityTips[Math.floor(Math.random() * longevityTips.length)];
-            const container = document.getElementById('randomRecommendation');
-            if (container) {
-                container.innerHTML = `
-                    <div class="mt-4 p-4 bg-accent/10 border-l-4 border-accent rounded-lg">
-                        <p class="font-bold text-gray-800 mb-1">Recomendación para longevidad:</p>
-                        <p class="text-sm text-gray-700">${tip}</p>
-                    </div>
-                `;
-            }
+            const container = document.getElementById('randomTip');
+            container.innerHTML = tip.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
         }
 
-        window.exportToCSV = function() {
+        function displayRecords(records) {
+            const container = document.getElementById('recordsTableBody');
+            container.innerHTML = '';
+            
+            if (records.length === 0) {
+                container.innerHTML = `<tr><td colspan="7" class="text-center py-4 text-gray-500">No hay registros para ${defaultUserDisplay}. Comienza a registrar en la pestaña "Registro".</td></tr>`;
+                return;
+            }
+
+            records.forEach(record => {
+                const date = new Date(record.date).toLocaleDateString('es-CL');
+                
+                const minSurco = record.tires.reduce((min, tire) => Math.min(min, tire.surco1, tire.surco2, tire.surco3), 99);
+                const criticalClass = minSurco < 3.0 ? 'bg-red-100 text-red-800 font-bold' : (minSurco < 5.0 ? 'bg-yellow-100 text-yellow-800' : 'text-gray-700');
+                
+                let tireDetails = record.tires.map(t => `${t.position}: ${Math.min(t.surco1, t.surco2, t.surco3).toFixed(1)}mm`).join(', ');
+
+                const row = `
+                    <tr class="border-b hover:bg-gray-50 transition duration-150">
+                        <td class="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">${record.orderNumber}</td>
+                        <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${record.vehicleType}</td>
+                        <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${record.mileage.toLocaleString('es-CL')} km</td>
+                        <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${date}</td>
+                        <td class="px-4 py-3 whitespace-normal text-xs text-gray-600">${tireDetails}</td>
+                        <td class="px-4 py-3 whitespace-nowrap text-sm ${criticalClass}">${minSurco.toFixed(1)} mm</td>
+                        <td class="px-4 py-3 whitespace-nowrap text-right text-sm font-medium">
+                            <button onclick="window.analyzeRecord('${record.id}')" class="text-primary hover:text-secondary p-2 rounded-full transition duration-150">
+                                <span class="text-lg">✨</span> Analizar
+                            </button>
+                        </td>
+                    </tr>
+                `;
+                container.insertAdjacentHTML('beforeend', row);
+            });
+        }
+        
+        window.exportToCsv = function() {
             if (window.currentRecords.length === 0) {
                 window.displayMessage('No hay datos para exportar.', 'error');
                 return;
             }
+
+            let csvContent = "data:text/csv;charset=utf-8,";
             
-            if (!currentUserId) {
-                window.displayMessage('Debes iniciar sesión para exportar.', 'error');
-                return;
+            // 1. Obtener encabezados
+            const baseHeaders = ["Orden", "Kilometraje", "Fecha", "Tipo Vehículo", "Marca General", "Medida", "Comentarios", "Técnico"];
+            // Asumiendo que el tipo de vehículo con más ruedas es el "Minibús DR" o "Bus"
+            const maxTires = TIRES_STRUCTURE['Bus'].length; 
+            
+            const tireHeaders = [];
+            for (const type in TIRES_STRUCTURE) {
+                TIRES_STRUCTURE[type].forEach(pos => {
+                    tireHeaders.push(`Posicion_${pos}_Modelo`);
+                    tireHeaders.push(`Posicion_${pos}_Surco1`);
+                    tireHeaders.push(`Posicion_${pos}_Surco2`);
+                    tireHeaders.push(`Posicion_${pos}_Surco3`);
+                    tireHeaders.push(`Posicion_${pos}_FotoURL`);
+                });
             }
+            // Filtrar y desduplicar los tireHeaders
+            const uniqueTireHeaders = [...new Set(tireHeaders)];
 
-            const header = [
-                "N° Orden", "Fecha", "Tipo Vehículo", "Medida Neumático", "Kilometraje (km)", 
-                "Marca/Modelo General", "Comentarios Generales", "ID Técnico", "Posición Corta", "Posición Completa", 
-                "Marca/Modelo Específico", "Surco 1 (mm)", "Surco 2 (mm)", "Surco 3 (mm)", "Menor Surco (mm)", "URL Foto"
-            ];
+            const headers = baseHeaders.concat(uniqueTireHeaders);
+            csvContent += headers.join(";") + "\r\n";
 
-            const rows = [];
+            // 2. Mapear datos
             window.currentRecords.forEach(record => {
-                const baseRow = [
-                    record.orderNumber, record.date, record.vehicleType, record.tireSize || 'N/A', record.mileage,
-                    record.generalMakeModel, record.generalComments || '', record.technicianId || 'N/A',
+                let rowData = [
+                    record.orderNumber,
+                    record.mileage,
+                    record.date,
+                    record.vehicleType,
+                    record.generalMakeModel,
+                    record.tireSize,
+                    `"${record.generalComments.replace(/"/g, '""')}"`, // Escapar comillas dobles
+                    record.technicianId
                 ];
 
-                record.tires.forEach(tire => {
-                    const row = [
-                        ...baseRow,
-                        tire.position,
-                        tire.description,
-                        tire.makeModel,
-                        tire.surco1.toFixed(1),
-                        tire.surco2.toFixed(1),
-                        tire.surco3.toFixed(1),
-                        Math.min(tire.surco1, tire.surco2, tire.surco3).toFixed(1),
-                        tire.photoURL || 'N/A' // Se exporta la URL de Storage
-                    ];
-                    rows.push(row.map(String).map(s => `"${s.replace(/"/g, '""')}"`).join(','));
+                // Crear un mapa para acceder fácilmente a los datos del neumático por posición
+                const tireMap = record.tires.reduce((map, t) => {
+                    map[t.position] = t;
+                    return map;
+                }, {});
+
+                uniqueTireHeaders.forEach(header => {
+                    // Posicion_I1_Modelo, Posicion_I1_Surco1, etc.
+                    const [_, pos, field] = header.split('_'); 
+                    const tire = tireMap[pos];
+
+                    let value = '';
+                    if (tire) {
+                        if (field === 'Modelo') value = tire.makeModel;
+                        if (field === 'Surco1') value = tire.surco1 || '';
+                        if (field === 'Surco2') value = tire.surco2 || '';
+                        if (field === 'Surco3') value = tire.surco3 || '';
+                        if (field === 'FotoURL') value = tire.photoURL === 'N/A' ? '' : tire.photoURL;
+                    }
+                    rowData.push(value);
                 });
+
+                csvContent += rowData.join(";") + "\r\n";
             });
 
-            const csvContent = [
-                header.join(','),
-                ...rows
-            ].join('\n');
-
-            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-            const link = document.createElement('a');
-            const url = URL.createObjectURL(blob);
-            link.setAttribute('href', url);
-            link.setAttribute('download', `Registros_Surcos_${currentUserId}_${new Date().toISOString().split('T')[0]}.csv`);
-            link.style.visibility = 'hidden';
+            // 3. Crear y descargar el archivo
+            const encodedUri = encodeURI(csvContent);
+            const link = document.createElement("a");
+            link.setAttribute("href", encodedUri);
+            link.setAttribute("download", `registros_neumaticos_${currentUserId}_${Date.now()}.csv`);
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
-
-            window.displayMessage('Datos exportados exitosamente a CSV (compatible con Excel).', 'success');
+            
+            window.displayMessage('Exportación a CSV completada. Abre el archivo en Excel.', 'success');
         }
 
-        window.addEventListener('load', async () => {
-            // Rellenar lista de tamaños y modelos
-            const populateSelect = (selectId, dataArray) => {
-                const select = document.getElementById(selectId);
-                if (select) {
-                    dataArray.forEach(item => {
-                        const option = document.createElement('option');
-                        option.value = item.id || item;
-                        option.textContent = item.name || item;
-                        select.appendChild(option);
-                    });
-                }
-            };
-            
-            populateSelect('loginCity', USER_OPTIONS); // Rellenar ciudades de login
-            populateSelect('tireSize', PREDEFINED_SIZES);
-            populateSelect('makeModel', PREDEFINED_MODELS);
+        // --- INICIALIZACIÓN ---
+        
+        window.onload = function() {
+            initializeFirebase().then(() => {
+                
+                const makeModelSelect = document.getElementById('makeModel');
+                const tireSizeSelect = document.getElementById('tireSize');
+                
+                // Rellenar las listas desplegables (no se necesita la de login/ciudad)
+                PREDEFINED_MODELS.forEach(model => {
+                    makeModelSelect.innerHTML += `<option value="${model}">${model}</option>`;
+                });
+                PREDEFINED_SIZES.forEach(size => {
+                    tireSizeSelect.innerHTML += `<option value="${size}">${size}</option>`;
+                });
 
-            // Establecer fecha actual
-            document.getElementById('date').valueAsDate = new Date();
+                // Iniciar la aplicación directamente con el usuario por defecto
+                document.getElementById('userIdDisplay').textContent = `${defaultUserDisplay} (${currentUserId})`;
+                loadRecords(); // Iniciar la carga de datos del usuario
+                window.switchTab('guide'); // Abrir la pestaña Guía al iniciar
+            });
+        };
 
-            // Generar inputs iniciales
-            window.generateTireInputs();
-            window.switchTab('guide');
-            
-            // 1. Inicializa Firebase y realiza la autenticación (AHORA ES ASÍNCRONO Y NECESITA ESPERA)
-            await initializeFirebase(); 
-            
-            // 2. Muestra el login o carga la app
-            checkLoginState(); 
+    </script>
+</head>
 
-            // Lógica del contador de caracteres
-            const commentTextarea = document.getElementById('generalComments');
-            const charCountSpan = document.getElementById('charCount');
-            if (commentTextarea) {
-                commentTextarea.addEventListener('input', () => {
-                    const maxLength = commentTextarea.maxLength;
-                    const currentLength = commentTextarea.value.length;
-                    charCountSpan.textContent = maxLength - currentLength;
+<body class="bg-background">
+    <!-- El modal de LOGIN ha sido omitido. La app se inicia directamente. -->
+
+    <!-- MODAL DE ANÁLISIS IA -->
+    <div id="analysis-modal" class="hidden">
+        <div class="modal-content w-full sm:w-11/12 md:w-2/3 lg:w-1/2">
+            <div class="flex justify-between items-center mb-4 pb-2 border-b">
+                <h2 id="analysisTitle" class="text-xl font-bold text-primary">Analizando...</h2>
+                <button id="analysisCloseButton" onclick="window.showAnalysisModal(false)" class="text-gray-400 hover:text-gray-600">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </div>
+            <div id="analysisContent" class="py-4 text-sm">
+                <!-- Contenido dinámico de carga o resultado -->
+            </div>
+        </div>
+    </div>
+
+    <!-- CONTENEDOR PRINCIPAL DE LA APP (Ahora visible por defecto) -->
+    <div id="app-container" class="min-h-screen flex flex-col">
+        
+        <!-- HEADER -->
+        <header class="bg-white shadow-md sticky top-0 z-10">
+            <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex justify-between items-center">
+                <h1 class="text-2xl font-extrabold text-primary flex items-center">
+                    <svg class="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 18.75V3m0 15v-6m0 6l3.75-3.75M12 18.75l-3.75-3.75M4.5 9h15"></path></svg>
+                    Control de Neumáticos
+                </h1>
+                <div class="flex items-center space-x-4">
+                    <!-- Se muestra el usuario por defecto 'Copiapó (Default)' -->
+                    <p class="text-sm text-gray-600">Técnico: <span id="userIdDisplay" class="font-semibold text-primary">Cargando...</span></p>
+                </div>
+            </div>
+            
+            <!-- Botones de Pestañas -->
+            <nav class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 flex border-b">
+                <button id="tab-button-guide" onclick="window.switchTab('guide')" class="tab-button active flex-1 py-3 text-sm text-gray-500 hover:text-primary transition duration-200">
+                    Guía & Tips
+                </button>
+                <button id="tab-button-register" onclick="window.switchTab('register')" class="tab-button flex-1 py-3 text-sm text-gray-500 hover:text-primary transition duration-200">
+                    Registro
+                </button>
+                <button id="tab-button-records" onclick="window.switchTab('records')" class="tab-button flex-1 py-3 text-sm text-gray-500 hover:text-primary transition duration-200">
+                    Ver Registros
+                </button>
+            </nav>
+        </header>
+
+        <!-- CONTENIDO PRINCIPAL -->
+        <main class="flex-grow max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+            
+            <!-- Mensaje de la APP -->
+            <div id="appMessage" class="hidden opacity-0" role="alert"></div>
+
+            <!-- PESTAÑA 1: GUÍA & TIPS -->
+            <div id="tab-content-guide" class="space-y-6">
+                <div class="bg-white p-6 rounded-xl shadow-lg border border-gray-100">
+                    <h2 class="text-2xl font-bold text-primary mb-4">Guía Rápida de la Aplicación</h2>
+                    <ul class="list-disc list-inside space-y-3 text-gray-700 text-sm">
+                        <li>**Usuario Activo (Por Defecto):** La aplicación ha omitido el login y está usando al técnico **Copiapó (copiapo)**. Todos los registros se guardarán bajo este ID y se filtrarán por él.</li>
+                        <li>**Registro:** En la pestaña "Registro", selecciona el tipo de vehículo. Esto cargará automáticamente el número correcto de ruedas a inspeccionar.</li>
+                        <li>**Medición:** Los surcos se miden en **milímetros (mm)**. Usa la galga de profundidad en 3 puntos distintos del surco principal (interior, centro, exterior) y registra los tres valores.</li>
+                        <li>**Evaluar:** Presiona **"Evaluar Medición"** para obtener comentarios técnicos automáticos (alineación, presión, estado crítico).</li>
+                        <li>**Guardar:** El botón **"Guardar Registro"** subirá los datos y las fotos a la base de datos (Firestore y Storage).</li>
+                        <li>**Análisis IA:** En la pestaña "Ver Registros", usa el botón **✨ Analizar** para obtener un informe experto de Gemini sobre el desgaste y las acciones recomendadas.</li>
+                    </ul>
+                </div>
+                
+                <div class="bg-white p-6 rounded-xl shadow-lg border border-gray-100">
+                    <h2 class="text-2xl font-bold text-primary mb-4">Recomendaciones para Lectura Precisa</h2>
+                    <ul class="list-disc list-inside space-y-3 text-gray-700 text-sm">
+                        <li>**Limpieza:** Asegúrate de que el surco esté libre de piedras y barro antes de insertar la galga.</li>
+                        <li>**Posición:** Mide en el surco principal con menor profundidad. Nunca midas cerca de los indicadores de desgaste.</li>
+                        <li>**Puntos:** La medición de 3 puntos (surco 1, 2 y 3) debe tomarse en el mismo surco, pero espaciados a lo largo de la banda de rodadura (interior, centro, exterior) para detectar desgaste irregular.</li>
+                        <li>**Precisión:** Asegura que la base de la galga esté plana sobre la banda de rodadura y que el vástago esté insertado perpendicularmente.</li>
+                    </ul>
+                </div>
+
+                <div class="bg-primary/10 p-6 rounded-xl shadow-lg border border-primary/20">
+                    <h2 class="text-xl font-bold text-primary mb-4">✨ Recomendación Aleatoria para Longevidad</h2>
+                    <p id="randomTip" class="text-gray-700 text-lg italic">
+                        <!-- El tip se carga con JS -->
+                    </p>
+                </div>
+            </div>
+
+            <!-- PESTAÑA 2: REGISTRO -->
+            <div id="tab-content-register" class="hidden">
+                <form id="registrationForm" onsubmit="return false" class="space-y-6">
+                    
+                    <!-- INFORMACIÓN PRINCIPAL DEL VEHÍCULO -->
+                    <div class="bg-white p-6 rounded-xl shadow-lg space-y-4">
+                        <h3 class="text-xl font-semibold text-primary border-b pb-2">Datos de la Inspección</h3>
+                        
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label for="orderNumber" class="block text-sm font-medium text-gray-700">Número de Orden</label>
+                                <input type="number" id="orderNumber" name="orderNumber" class="form-control" required>
+                            </div>
+                            <div>
+                                <label for="mileage" class="block text-sm font-medium text-gray-700">Kilometraje (km)</label>
+                                <input type="number" id="mileage" name="mileage" class="form-control" required>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label for="date" class="block text-sm font-medium text-gray-700">Fecha</label>
+                                <!-- Valor de la fecha preestablecido a la fecha actual para conveniencia -->
+                                <input type="date" id="date" name="date" class="form-control" value="${new Date().toISOString().slice(0, 10)}" required>
+                            </div>
+                            <div>
+                                <label for="vehicleType" class="block text-sm font-medium text-gray-700">Tipo de Vehículo</label>
+                                <select id="vehicleType" name="vehicleType" class="form-control" onchange="window.generateTireInputs()" required>
+                                    <option value="" disabled selected>Selecciona tipo...</option>
+                                    <option value="Bus">Bus</option>
+                                    <option value="Taxibus">Taxibus</option>
+                                    <option value="Minibús">Minibús</option>
+                                    <option value="Minibús DR (Doble Rodado)">Minibús DR (Doble Rodado)</option>
+                                    <option value="Camioneta">Camioneta</option>
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label for="tireSize" class="block text-sm font-medium text-gray-700">Medida de Neumático (General)</label>
+                                <select id="tireSize" name="tireSize" class="form-control" required>
+                                    <option value="" disabled selected>Selecciona medida...</option>
+                                    <!-- Opciones cargadas por JS -->
+                                </select>
+                            </div>
+                            <div>
+                                <label for="makeModel" class="block text-sm font-medium text-gray-700">Marca y Modelo (General)</label>
+                                <select id="makeModel" name="makeModel" class="form-control" required>
+                                    <option value="" disabled selected>Selecciona marca/modelo...</option>
+                                    <!-- Opciones cargadas por JS -->
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- CONTENEDOR DE NEUMÁTICOS DINÁMICOS -->
+                    <div id="tireInputsContainer" class="mt-6">
+                        <div class="bg-gray-100 p-4 rounded-xl text-gray-600 text-center">
+                            Selecciona el **Tipo de Vehículo** para cargar las posiciones de neumáticos.
+                        </div>
+                    </div>
+
+                    <!-- COMENTARIOS GENERALES -->
+                    <div class="bg-white p-6 rounded-xl shadow-lg">
+                        <label for="generalComments" class="block text-sm font-medium text-gray-700 mb-1">Comentarios Generales (Máx. 100 caracteres)</label>
+                        <textarea id="generalComments" name="generalComments" rows="2" maxlength="100" class="form-control" placeholder="Notas sobre el estado general del vehículo o neumáticos..."></textarea>
+                        <div class="text-xs text-gray-500 mt-1">
+                            <span id="commentLength">0</span>/100 caracteres.
+                        </div>
+                    </div>
+                    
+                    <!-- BOTONES Y FEEDBACK DE REVISIÓN -->
+                    <div class="space-y-4">
+                        <div id="reviewFeedback" class="space-y-2">
+                            <!-- Mensajes de la revisión técnica se muestran aquí -->
+                        </div>
+
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <button type="button" id="reviewButton" onclick="window.handleReview(event)" 
+                                class="w-full bg-accent text-gray-900 py-3 rounded-xl font-semibold hover:bg-yellow-500 transition duration-200 shadow-md flex items-center justify-center disabled:opacity-50"
+                                disabled>
+                                Evaluar Medición
+                            </button>
+                            <button type="button" id="saveButton" onclick="window.handleSave()"
+                                class="w-full bg-primary text-white py-3 rounded-xl font-semibold hover:bg-secondary transition duration-200 shadow-lg flex items-center justify-center disabled:opacity-50"
+                                disabled>
+                                Guardar Registro
+                            </button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+
+            <!-- PESTAÑA 3: REGISTROS HISTÓRICOS -->
+            <div id="tab-content-records" class="hidden">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-2xl font-bold text-primary">Historial de Inspecciones</h2>
+                    <button onclick="window.exportToCsv()" class="bg-blue-500 text-white px-4 py-2 text-sm rounded-xl hover:bg-blue-600 transition duration-200 shadow-md flex items-center">
+                        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v-2a4 4 0 014-4h8a4 4 0 014 4v2m-6-4l-2 2m0 0l-2-2m2 2V4"></path></svg>
+                        Exportar a Excel (CSV)
+                    </button>
+                </div>
+                
+                <div class="bg-white rounded-xl shadow-lg overflow-x-auto">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Orden</th>
+                                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Vehículo</th>
+                                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Kilometraje</th>
+                                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Fecha</th>
+                                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Detalle Surcos (Min)</th>
+                                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Mín. Global</th>
+                                <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Análisis IA</th>
+                            </tr>
+                        </thead>
+                        <tbody id="recordsTableBody" class="bg-white divide-y divide-gray-200">
+                            <!-- Los registros se cargan aquí desde JS -->
+                            <tr><td colspan="7" class="text-center py-4 text-gray-500">Cargando registros...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+        </main>
+        
+        <footer class="bg-gray-100 mt-8 py-4 text-center text-sm text-gray-500">
+            Desarrollado con Firebase y Gemini API para la gestión de flotas.
+        </footer>
+    </div>
+    
+    <script>
+        // Contador de caracteres para comentarios
+        document.addEventListener('DOMContentLoaded', () => {
+            const textarea = document.getElementById('generalComments');
+            const counter = document.getElementById('commentLength');
+            
+            if (textarea && counter) {
+                textarea.addEventListener('input', () => {
+                    const length = textarea.value.length;
+                    counter.textContent = length;
                 });
             }
         });
     </script>
-</head>
-<body class="bg-background">
-    <!-- Modal de Login -->
-    <div id="login-modal" class="hidden">
-        <div class="bg-white p-8 rounded-xl shadow-2xl w-full max-w-sm">
-            <h2 class="text-3xl font-bold text-primary mb-2 text-center">Bienvenido</h2>
-            <p class="text-gray-600 mb-6 text-center">Inicie sesión para acceder a los registros de su flota.</p>
-            <form id="loginForm" onsubmit="window.handleLogin(event)">
-                <div class="mb-4">
-                    <label for="loginCity" class="block text-sm font-medium text-gray-700 mb-1">Ubicación (Usuario)</label>
-                    <select id="loginCity" required class="form-control">
-                        <option value="" disabled selected>Seleccione su ciudad</option>
-                        <!-- Options filled by JS -->
-                    </select>
-                </div>
-                <div class="mb-6">
-                    <label for="loginPassword" class="block text-sm font-medium text-gray-700 mb-1">Contraseña</label>
-                    <input type="password" id="loginPassword" required class="form-control" placeholder="Ingrese FlotaVerschae.">
-                    <p class="text-xs text-gray-500 mt-1">Contraseña única: FlotaVerschae.</p>
-                </div>
-                <p id="loginMessage" class="text-sm font-medium mb-4 text-red-600 text-center"></p>
-                <button type="submit" class="w-full py-3 bg-accent text-gray-900 font-bold rounded-lg shadow-md hover:bg-accent/90 transition duration-150">
-                    Iniciar Sesión
-                </button>
-            </form>
-        </div>
-    </div>
-
-    <!-- Modal de Análisis de IA (NUEVO) -->
-    <div id="analysis-modal" class="hidden">
-        <div class="modal-content">
-            <h2 id="analysisTitle" class="text-2xl font-bold text-primary mb-4">Análisis Técnico IA</h2>
-            <div id="analysisContent">
-                <!-- Contenido del análisis, carga o error -->
-            </div>
-            <div class="mt-6 flex justify-end">
-                <button onclick="window.showAnalysisModal(false)" class="py-2 px-4 bg-gray-200 text-gray-800 font-medium rounded-lg hover:bg-gray-300 transition">
-                    Cerrar
-                </button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Contenedor Principal de la App (Oculto hasta el login) -->
-    <div id="app-container" class="max-w-4xl mx-auto p-4 md:p-8 hidden">
-        <!-- Encabezado y Título -->
-        <header class="mb-6 pb-4 border-b border-gray-200 flex justify-between items-center">
-            <div>
-                <h1 class="text-3xl font-extrabold text-primary mb-1">
-                    <span class="inline-block align-middle mr-2">⚙️</span>
-                    Gestión de Surcos de Neumáticos
-                </h1>
-                <p class="text-gray-600">App para la flota de vehículos (${typeof __app_id !== 'undefined' ? __app_id : 'default-app-id'})</p>
-                <p class="text-sm text-gray-500 mt-2">ID Técnico: <span id="userIdDisplay" class="font-mono text-xs p-1 bg-gray-100 rounded">Cargando...</span></p>
-            </div>
-            <button onclick="window.handleLogout()" class="p-2 text-sm text-red-600 border border-red-300 rounded-lg hover:bg-red-50 transition duration-150">
-                Cerrar Sesión
-            </button>
-        </header>
-
-        <!-- Contenedor de Pestañas -->
-        <div class="mb-6 sticky top-0 bg-background z-10 border-b border-gray-300">
-            <div class="flex justify-around space-x-2 text-center text-gray-500">
-                <button id="tab-button-guide" onclick="window.switchTab('guide')" class="tab-button py-3 w-1/3 text-sm md:text-base">Guía & Tips</button>
-                <button id="tab-button-register" onclick="window.switchTab('register')" class="tab-button py-3 w-1/3 text-sm md:text-base">Registrar Medición</button>
-                <button id="tab-button-records" onclick="window.switchTab('records')" class="tab-button py-3 w-1/3 text-sm md:text-base">Ver Registros</button>
-            </div>
-        </div>
-
-        <!-- Contenido de las Pestañas -->
-        <div id="messageContainer"></div>
-
-        <!-- Pestaña 1: Guía y Recomendaciones -->
-        <div id="tab-content-guide" class="p-4 bg-white shadow-xl rounded-xl">
-            <h2 class="text-2xl font-bold text-primary mb-4">Guía Rápida de la Aplicación</h2>
-
-            <div class="space-y-4 text-gray-700">
-                <p>Bienvenido a tu herramienta de gestión de neumáticos. Sigue estos pasos para un registro eficiente:</p>
-                <ol class="list-decimal list-inside space-y-2 pl-4">
-                    <li>Selecciona la pestaña "**Registrar Medición**".</li>
-                    <li>Completa los datos de la orden, kilometraje, **tamaño** y el tipo de vehículo.</li>
-                    <li>El formulario se adaptará automáticamente. **Posición 1 (I1)** es la rueda delantera izquierda (lado del conductor).</li>
-                    <li>Mide los **tres surcos** (interior, medio y exterior) e ingrésalos en milímetros (mm).</li>
-                    <li>**(IMPORTANTE)** Opcionalmente, sube una foto por rueda. Esta foto se **guardará en tu Firebase Storage** y su enlace se adjuntará al registro.</li>
-                    <li>Presiona "**Evaluar Medición**" para obtener comentarios técnicos de desgaste (alineación, presión, alerta crítica).</li>
-                    <li>Presiona "**Guardar Registro**" para finalizar.</li>
-                    <li>Revisa tus entradas en la pestaña "**Ver Registros**" y usa el botón **Exportar** para obtener un archivo compatible con Excel, o usa el botón **✨ Analizar** para obtener una evaluación experta de la IA.</li>
-                </ol>
-
-                <h3 class="text-xl font-semibold text-gray-800 pt-4 border-t mt-6">Recomendaciones para una Lectura Precisa</h3>
-                <ul class="list-disc list-inside space-y-2 pl-4 text-sm">
-                    <li>**Calibración:** Asegúrate de que tu profundímetro de surcos esté calibrado y sea preciso.</li>
-                    <li>**Limpieza:** Limpia el surco antes de medir para eliminar piedras o suciedad que puedan falsear la lectura.</li>
-                    <li>**Ubicación:** Mide en al menos **tres puntos** del surco principal (interior, medio y exterior) y registra los tres valores.</li>
-                    <li>**Punto Clave:** El valor de desgaste crítico es el **menor** de los tres surcos. Si este es inferior a 3mm, se requiere atención inmediata.</li>
-                    <li>**Estabilidad:** El vehículo debe estar detenido en una superficie plana y los neumáticos fríos para la inspección.</li>
-                </ul>
-            </div>
-
-            <!-- Recomendación Aleatoria -->
-            <div id="randomRecommendation" class="mt-8">
-                <!-- Contenido generado por JS -->
-            </div>
-        </div>
-
-        <!-- Pestaña 2: Formulario de Registro -->
-        <div id="tab-content-register" class="hidden p-4 bg-white shadow-xl rounded-xl">
-            <h2 class="text-2xl font-bold text-primary mb-6">Nuevo Registro de Surcos</h2>
-            <form id="registrationForm" onsubmit="return false;">
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6 p-4 bg-gray-50 rounded-lg border">
-
-                    <!-- Número de Orden, Kilometraje, Fecha, Tamaño, Marca/Modelo General, Tipo Vehículo -->
-                    <div>
-                        <label for="orderNumber" class="block text-sm font-medium text-gray-700 mb-1">Número de Orden</label>
-                        <input type="number" id="orderNumber" name="orderNumber" min="1" required class="form-control" placeholder="Ej: 20250001">
-                    </div>
-                    <div>
-                        <label for="mileage" class="block text-sm font-medium text-gray-700 mb-1">Kilometraje (km)</label>
-                        <input type="number" id="mileage" name="mileage" min="0" required class="form-control" placeholder="Ej: 150000">
-                    </div>
-                    
-                    <div>
-                        <label for="date" class="block text-sm font-medium text-gray-700 mb-1">Fecha de Medición</label>
-                        <input type="date" id="date" name="date" required class="form-control">
-                    </div>
-                    <div>
-                        <label for="tireSize" class="block text-sm font-medium text-gray-700 mb-1">Medida del Neumático (General)</label>
-                        <select id="tireSize" name="tireSize" required class="form-control">
-                            <option value="" disabled selected>Seleccione medida</option>
-                            <!-- Options added by JS -->
-                        </select>
-                    </div>
-
-                    <div class="md:col-span-1">
-                        <label for="makeModel" class="block text-sm font-medium text-gray-700 mb-1">Marca y Modelo (General)</label>
-                        <select id="makeModel" name="makeModel" required class="form-control">
-                            <option value="" disabled selected>Seleccione marca y modelo</option>
-                            <!-- Options added by JS -->
-                        </select>
-                    </div>
-                    <div class="md:col-span-1">
-                        <label for="vehicleType" class="block text-sm font-medium text-gray-700 mb-1">Tipo de Vehículo</label>
-                        <select id="vehicleType" name="vehicleType" onchange="window.generateTireInputs()" required class="form-control">
-                            <option value="Bus">Bus (6 + Repuesto)</option>
-                            <option value="Taxibus">Taxibus (6 + Repuesto)</option>
-                            <option value="Minibús" selected>Minibús (4 + Repuesto)</option>
-                            <option value="Minibús DR (Doble Rodado)">Minibús DR (6 + Repuesto)</option>
-                            <option value="Camioneta">Camioneta (4 + Repuesto)</option>
-                        </select>
-                    </div>
-                    
-                    <!-- Comentarios Generales -->
-                    <div class="md:col-span-2">
-                        <label for="generalComments" class="block text-sm font-medium text-gray-700 mb-1">Comentarios Generales (Max 100 Caracteres)</label>
-                        <textarea id="generalComments" name="generalComments" maxlength="100" rows="2" class="form-control resize-none" placeholder="Añadir notas sobre el estado general del vehículo o las condiciones de la medición."></textarea>
-                        <p class="text-xs text-gray-400 mt-1">Límite: 100 caracteres. Caracteres restantes: <span id="charCount">100</span></p>
-                    </div>
-                </div>
-
-                <!-- Contenedor de Inputs de Neumáticos (Generado por JS) -->
-                <h3 class="text-xl font-semibold text-gray-800 mb-4 pt-2 border-t">Medición por Neumático</h3>
-                <div id="tireInputsContainer">
-                    <!-- Dynamic inputs go here -->
-                </div>
-                
-                <!-- Contenedor de Evaluación y Botones -->
-                <div id="reviewFeedback" class="hidden my-6 p-4 border rounded-xl bg-white shadow-lg">
-                    <!-- Technical comments will be displayed here -->
-                </div>
-
-                <div class="flex flex-col sm:flex-row gap-4 mt-6">
-                    <button type="button" id="reviewButton" onclick="window.handleReview(event)" class="w-full sm:w-1/2 py-3 bg-accent text-gray-900 font-bold rounded-lg shadow-lg hover:bg-accent/90 transition duration-150 flex items-center justify-center">
-                        Evaluar Medición
-                    </button>
-                    <button type="button" id="saveButton" onclick="window.handleSave()" disabled class="w-full sm:w-1/2 py-3 bg-primary text-white font-bold rounded-lg shadow-lg hover:bg-secondary transition duration-150 flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed">
-                        Guardar Registro
-                    </button>
-                </div>
-            </form>
-        </div>
-
-        <!-- Pestaña 3: Ver Registros -->
-        <div id="tab-content-records" class="hidden p-4 bg-white shadow-xl rounded-xl">
-            <div class="flex justify-between items-center mb-4">
-                <h2 class="text-2xl font-bold text-primary">Registros Históricos</h2>
-                <button onclick="window.exportToCSV()" class="flex items-center space-x-2 py-2 px-4 bg-accent text-gray-800 font-semibold rounded-lg shadow hover:bg-accent/80 transition duration-150">
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-5 h-5">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
-                    </svg>
-                    Exportar a Excel (CSV)
-                </button>
-            </div>
-            <p id="recordsCount" class="text-gray-600 mb-4 font-medium"></p>
-            <p class="text-xs text-gray-500 mb-4">Los datos se guardan en la base de datos Firestore y se exportan a CSV. Use el botón **✨ Analizar** para obtener un reporte instantáneo de la IA.</p>
-
-            <div class="overflow-x-auto shadow-md rounded-lg">
-                <table class="min-w-full divide-y divide-gray-200">
-                    <thead class="bg-primary text-white">
-                        <tr>
-                            <th scope="col" class="p-3 text-left text-xs font-medium uppercase tracking-wider">N° Orden</th>
-                            <th scope="col" class="p-3 text-left text-xs font-medium uppercase tracking-wider">Fecha</th>
-                            <th scope="col" class="p-3 text-left text-xs font-medium uppercase tracking-wider">Tipo/Medida</th>
-                            <th scope="col" class="p-3 text-left text-xs font-medium uppercase tracking-wider">Kilometraje</th>
-                            <th scope="col" class="p-3 text-left text-xs font-medium uppercase tracking-wider">Marca/Modelo Gral.</th>
-                            <th scope="col" class="p-3 text-center text-xs font-medium uppercase tracking-wider">Fotos</th>
-                            <th scope="col" class="p-3 text-center text-xs font-medium uppercase tracking-wider">Análisis IA</th>
-                            <th scope="col" class="p-3 text-left text-xs font-medium uppercase tracking-wider">Posición</th>
-                            <th scope="col" class="p-3 text-center text-xs font-medium uppercase tracking-wider">Menor Surco (mm)</th>
-                        </tr>
-                    </thead>
-                    <tbody id="recordsTableBody" class="bg-white divide-y divide-gray-200">
-                        <!-- Data will be loaded by JS -->
-                        <tr><td colspan="9" class="py-4 text-center text-gray-500">Inicia sesión para ver tus registros.</td></tr>
-                    </tbody>
-                </table>
-            </div>
-            <div id="loadingIndicator" class="mt-4 text-center text-gray-500 hidden">Cargando datos...</div>
-        </div>
-    </div>
 </body>
 </html>
