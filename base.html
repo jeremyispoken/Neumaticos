@@ -247,10 +247,15 @@
       const recordDetails = formatRecordForPrompt(record);
       const systemPrompt = "Actúa como ingeniero de mantenimiento de flotas y experto en neumáticos. Analiza el informe de surcos. Indica neumáticos críticos (<3mm) y sugiere un plan de acción conciso y priorizado (rotación, reemplazo, alineación, presión). Usa fuentes web si es útil y lista las citas.";
       const userQuery = `Análisis de la Orden N° ${record.orderNumber} con ${record.mileage} km:\n\n${recordDetails}`;
+      if (!apiKey) {
+        console.error('No se ha configurado la clave de API de Gemini.');
+        return displayAppMessage('Configura la clave de Gemini antes de usar el análisis con IA.', 'error');
+      }
+
       const payload = {
-        contents: [{ parts: [{ text: userQuery }] }],
-        systemInstruction: { parts: [{ text: systemPrompt }] },
-        tools: [{ "google_search": {} }]
+        contents: [{ role: 'user', parts: [{ text: userQuery }] }],
+        systemInstruction: { role: 'system', parts: [{ text: systemPrompt }] },
+        tools: [{ google_search: {} }]
       };
 
       try {
@@ -259,13 +264,15 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         });
-        if (!res.ok) throw new Error(`Gemini API request failed with status ${res.status}`);
-
         const result = await res.json();
+        if (!res.ok) {
+          const apiError = result?.error?.message;
+          throw new Error(apiError ? `Gemini API error: ${apiError}` : `Gemini API request failed with status ${res.status}`);
+        }
         const candidate = result?.candidates?.[0];
         const text = candidate?.content?.parts?.[0]?.text || 'No se pudo generar un análisis.';
         const sources = (candidate?.groundingMetadata?.groundingAttributions || []).map(a => ({ uri: a?.web?.uri, title: a?.web?.title })).filter(s => s.uri && s.title);
-        
+
         displayAppMessage(`✅ Análisis de Orden N° ${record.orderNumber} generado.`, 'success');
         console.log(`--- Análisis Gemini Orden N° ${record.orderNumber} ---`);
         console.log(text);
@@ -277,7 +284,8 @@
 
       } catch (e) {
         console.error("Error en el análisis con Gemini:", e);
-        displayAppMessage('Error al conectar con la IA.', 'error');
+        const friendlyMessage = e?.message?.startsWith('Gemini API') ? e.message : 'Error al conectar con la IA.';
+        displayAppMessage(friendlyMessage, 'error');
       }
     }
 
@@ -1277,10 +1285,15 @@
       const recordDetails = formatRecordForPrompt(record);
       const systemPrompt = "Actúa como ingeniero de mantenimiento de flotas y experto en neumáticos. Analiza el informe de surcos. Indica neumáticos críticos (<3mm) y sugiere un plan de acción conciso y priorizado (rotación, reemplazo, alineación, presión). Usa fuentes web si es útil y lista las citas.";
       const userQuery = `Análisis de la Orden N° ${record.orderNumber} con ${record.mileage} km:\n\n${recordDetails}`;
+      if (!apiKey) {
+        console.error('No se ha configurado la clave de API de Gemini.');
+        return displayAppMessage('Configura la clave de Gemini antes de usar el análisis con IA.', 'error');
+      }
+
       const payload = {
-        contents: [{ parts: [{ text: userQuery }] }],
-        systemInstruction: { parts: [{ text: systemPrompt }] },
-        tools: [{ "google_search": {} }]
+        contents: [{ role: 'user', parts: [{ text: userQuery }] }],
+        systemInstruction: { role: 'system', parts: [{ text: systemPrompt }] },
+        tools: [{ google_search: {} }]
       };
 
       try {
@@ -1289,13 +1302,15 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         });
-        if (!res.ok) throw new Error(`Gemini API request failed with status ${res.status}`);
-
         const result = await res.json();
+        if (!res.ok) {
+          const apiError = result?.error?.message;
+          throw new Error(apiError ? `Gemini API error: ${apiError}` : `Gemini API request failed with status ${res.status}`);
+        }
         const candidate = result?.candidates?.[0];
         const text = candidate?.content?.parts?.[0]?.text || 'No se pudo generar un análisis.';
         const sources = (candidate?.groundingMetadata?.groundingAttributions || []).map(a => ({ uri: a?.web?.uri, title: a?.web?.title })).filter(s => s.uri && s.title);
-        
+
         displayAppMessage(`✅ Análisis de Orden N° ${record.orderNumber} generado.`, 'success');
         console.log(`--- Análisis Gemini Orden N° ${record.orderNumber} ---`);
         console.log(text);
@@ -1307,7 +1322,8 @@
 
       } catch (e) {
         console.error("Error en el análisis con Gemini:", e);
-        displayAppMessage('Error al conectar con la IA.', 'error');
+        const friendlyMessage = e?.message?.startsWith('Gemini API') ? e.message : 'Error al conectar con la IA.';
+        displayAppMessage(friendlyMessage, 'error');
       }
     }
 
