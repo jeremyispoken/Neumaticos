@@ -56,7 +56,6 @@
     import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
     import { getAuth, onAuthStateChanged, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
     import { getFirestore, addDoc, onSnapshot, collection, query, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-    import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-storage.js";
 
     // === CONFIGURACIÓN ===
     const GEMINI_MODEL = "gemini-2.5-flash-preview-05-20";
@@ -86,7 +85,7 @@
     ];
 
     // === ESTADO GLOBAL DE LA APLICACIÓN ===
-    let app = null, db = null, auth = null, storage = null;
+    let app = null, db = null, auth = null;
     let currentUserId = null;
     let authReady = false;
     let unsubscribeRecords = null;
@@ -113,7 +112,6 @@
       try {
         app = initializeApp(firebaseConfig);
         db = getFirestore(app);
-        storage = getStorage(app);
         auth = getAuth(app);
 
         onAuthStateChanged(auth, user => {
@@ -190,13 +188,48 @@
       }, (err) => console.error("Error en onSnapshot:", err));
     }
 
-    async function uploadPhoto(file, position) {
-      if (!storage || !currentUserId) throw new Error("Storage o usuario no disponibles");
-      const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
-      const fileName = `${currentUserId}_${position}_${Date.now()}.${ext}`;
-      const storageRef = ref(storage, `tire_photos/${currentUserId}/${fileName}`);
-      await uploadBytes(storageRef, file);
-      return getDownloadURL(storageRef);
+    async function convertImageFileToDataUrl(file) {
+      if (!(file instanceof File)) {
+        throw new Error('Archivo inválido.');
+      }
+
+      if (!file.type.startsWith('image/')) {
+        throw new Error('Solo se permiten imágenes.');
+      }
+
+      const maxDimension = 1280;
+      const objectUrl = URL.createObjectURL(file);
+
+      try {
+        const image = await new Promise((resolve, reject) => {
+          const img = new Image();
+          img.onload = () => resolve(img);
+          img.onerror = () => reject(new Error('No se pudo cargar la imagen.'));
+          img.src = objectUrl;
+        });
+
+        let { width, height } = image;
+        if (width > maxDimension || height > maxDimension) {
+          const ratio = Math.min(maxDimension / width, maxDimension / height);
+          width = Math.round(width * ratio);
+          height = Math.round(height * ratio);
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          throw new Error('No se pudo preparar el lienzo para la imagen.');
+        }
+        ctx.drawImage(image, 0, 0, width, height);
+
+        const mimeType = file.type === 'image/png' ? 'image/png' : 'image/jpeg';
+        const quality = mimeType === 'image/jpeg' ? 0.82 : undefined;
+        return canvas.toDataURL(mimeType, quality);
+      } finally {
+        URL.revokeObjectURL(objectUrl);
+      }
     }
     
     // === LÓGICA DE LA APLICACIÓN ===
@@ -211,14 +244,23 @@
       saveBtn.innerHTML = getLoaderSvg('Guardando...');
 
       try {
-        const uploadedPhotos = await Promise.all((data.photoFiles || []).map(async item => ({
-          position: item.position,
-          url: await uploadPhoto(item.file, item.position)
-        })));
-        
+        const processedPhotos = await Promise.all((data.photoFiles || []).map(async item => {
+          try {
+            const dataUrl = await convertImageFileToDataUrl(item.file);
+            return { position: item.position, dataUrl };
+          } catch (conversionError) {
+            console.error(`No se pudo procesar la imagen (${item.position}):`, conversionError);
+            return { position: item.position, dataUrl: null };
+          }
+        }));
+
+        if (processedPhotos.some(photo => !photo.dataUrl)) {
+          displayAppMessage('⚠️ Algunas fotografías no pudieron procesarse y se omitieron.', 'warning');
+        }
+
         data.tires = data.tires.map(tire => {
-          const foundPhoto = uploadedPhotos.find(p => p.position === tire.position);
-          return { ...tire, photoURL: foundPhoto ? foundPhoto.url : 'N/A' };
+          const foundPhoto = processedPhotos.find(p => p.position === tire.position);
+          return { ...tire, photoURL: foundPhoto && foundPhoto.dataUrl ? foundPhoto.dataUrl : 'N/A' };
         });
 
         const { photoFiles, ...finalRecord } = { ...data, timestamp: serverTimestamp() };
@@ -426,6 +468,9 @@
                 
                 const imagePromises = imageTires.map(async (tire) => {
                     try {
+                        if (tire.photoURL.startsWith('data:')) {
+                            return { tire, imageBase64: tire.photoURL, status: 'fulfilled' };
+                        }
                         const response = await fetch(tire.photoURL);
                         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
                         const blob = await response.blob();
