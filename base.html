@@ -35,9 +35,13 @@
     .form-control:focus { border-color: #059669; box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.2); outline: none; }
   </style>
 
+  <!-- Librerías para generar PDF -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js"></script>
+
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-    import { getAuth, onAuthStateChanged, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+    import { getAuth, onAuthStateChanged, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
     import { getFirestore, addDoc, onSnapshot, collection, query, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
     import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-storage.js";
 
@@ -47,11 +51,11 @@
     const apiKey = typeof __gemini_key !== 'undefined' ? __gemini_key : "";
     const BRANCHES = ["Copiapó", "Vallenar", "Santiago", "Viña del Mar", "Casa Matriz"];
     const TIRES_STRUCTURE = {
-      'Bus': ['I1', 'D1', 'I2', 'D2', 'I3', 'D3', 'Repuesto'],
-      'Taxibus': ['I1', 'D1', 'I2', 'D2', 'I3', 'D3', 'Repuesto'],
-      'Minibús': ['I1', 'D1', 'I2', 'D2', 'Repuesto'],
-      'Minibús DR (Doble Rodado)': ['I1', 'D1', 'I2', 'D2', 'I3', 'D3', 'Repuesto'],
-      'Camioneta': ['I1', 'D1', 'I2', 'D2', 'Repuesto'],
+      'Bus': ['P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'Repuesto'],
+      'Taxibus': ['P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'Repuesto'],
+      'Minibús': ['P1', 'P2', 'P3', 'P4', 'Repuesto'],
+      'Minibús DR (Doble Rodado)': ['P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'Repuesto'],
+      'Camioneta': ['P1', 'P2', 'P3', 'P4', 'Repuesto'],
     };
     const PREDEFINED_MODELS = [
       'Michelin X Multiway 3D XZE', 'Pirelli FH:01 Energy', 'Bridgestone R260', 'Dunlop SP338', 'Goodyear KMAX S', 'Continental HT3', 'Hankook SmartFlex AH31', 'Westlake CB867', 'Sailun S701'
@@ -76,38 +80,29 @@
     window.currentRecords = [];
     window.pendingReviewData = null;
 
-    const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-    const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+    // --- TUS CREDENCIALES DE FIREBASE ---
+    const firebaseConfig = {
+        apiKey: "AIzaSyBtc4KcGwNr4y79YeI4EdUX9mBSfindhH0",
+        authDomain: "neumaticos-fv.firebaseapp.com",
+        projectId: "neumaticos-fv",
+        storageBucket: "neumaticos-fv.appspot.com",
+        messagingSenderId: "50061965881",
+        appId: "1:50061965881:web:31c43abfeabc0c0ed8ebe8",
+        measurementId: "G-LZVB5CT01W"  
+    };
 
-    // === INICIALIZACIÓN (CÓDIGO CORREGIDO Y MEJORADO) ===
+    const appId = 'flota-track-app';
+
+    // === INICIALIZACIÓN (CÓDIGO FUNCIONAL) ===
     async function initializeAppCore() {
       setUiState('loading');
-
-      // 1. Validar la existencia de la configuración de Firebase.
-      if (typeof __firebase_config === 'undefined' || !__firebase_config) {
-        setUiState('error', 'Configuración de Firebase no encontrada.');
-        console.error("La variable global __firebase_config no está definida o está vacía.");
-        return;
-      }
-
-      // 2. Intentar parsear la configuración.
-      let firebaseConfig;
-      try {
-        firebaseConfig = JSON.parse(__firebase_config);
-      } catch (e) {
-        setUiState('error', 'Error al parsear la configuración de Firebase.');
-        console.error("Error al parsear __firebase_config:", e);
-        return;
-      }
       
-      // 3. Inicializar los servicios de Firebase.
       try {
         app = initializeApp(firebaseConfig);
         db = getFirestore(app);
         storage = getStorage(app);
         auth = getAuth(app);
 
-        // 4. Gestionar el estado de autenticación.
         onAuthStateChanged(auth, user => {
           if (user) {
             currentUserId = user.uid;
@@ -123,7 +118,6 @@
           }
         });
 
-        // 5. Intentar el inicio de sesión inicial.
         await attemptInitialSignIn();
 
       } catch (e) {
@@ -134,18 +128,11 @@
 
     async function attemptInitialSignIn() {
       try {
-        if (initialAuthToken) {
-          await signInWithCustomToken(auth, initialAuthToken);
-        } else {
-          await signInAnonymously(auth);
-        }
+        await signInAnonymously(auth);
       } catch (error) {
         console.error("Fallo el intento de inicio de sesión:", error.code, error.message);
         let friendlyMessage = "Error de autenticación desconocido.";
         switch (error.code) {
-          case 'auth/invalid-custom-token':
-            friendlyMessage = "Token de autenticación inválido o expirado.";
-            break;
           case 'auth/network-request-failed':
             friendlyMessage = "Falla de red. Revisa tu conexión.";
             break;
@@ -267,6 +254,195 @@
         displayAppMessage('Error al conectar con la IA.', 'error');
       }
     }
+
+    // === GENERACIÓN DE PDF ===
+    const logoBase64 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAoAAAAFeCAYAAABukM3AAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAE9YSURBVHhe7d15fFTV9f/xT5MkARIssEk2WCCybYVdtgq27f4vuIKKBYQLgoJll1244CIIKC44KuiuKCAqKgoKuOAsCKIiKAgKuy2AbLdlQRDZJrBNsEmYJJn+/midmUxyM3fnzklO8v28Pp/JJTfnzM15SXbu3DlzT/f09MTm5ma/u19+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn-girdim';
+
+    function generateRecommendations(record) {
+        const recommendations = new Set();
+        const replacementThreshold = 3.0;
+        const monitorThreshold = 5.0;
+        const irregularWearThreshold = 2.0;
+
+        record.tires.forEach(tire => {
+            const surcos = [tire.surco1, tire.surco2, tire.surco3];
+            const minSurco = Math.min(...surcos);
+            const maxSurco = Math.max(...surcos);
+            const diff = maxSurco - minSurco;
+
+            if (minSurco < replacementThreshold) {
+                recommendations.add(`- Reemplazo Urgente: El neumático en la posición ${tire.position} (${minSurco.toFixed(1)} mm) está por debajo del límite de seguridad.`);
+            } else if (minSurco < monitorThreshold) {
+                recommendations.add(`- Monitorear: El neumático en la posición ${tire.position} (${minSurco.toFixed(1)} mm) se acerca al final de su vida útil.`);
+            }
+
+            if (diff >= irregularWearThreshold) {
+                recommendations.add(`- Revisar Alineación y Balanceo: Se detectó desgaste irregular en la posición ${tire.position} (diferencia de ${diff.toFixed(1)} mm).`);
+            }
+        });
+
+        if (record.tires.length > 2) {
+             recommendations.add('- Planificar Rotación: Considere rotar los neumáticos para promover un desgaste uniforme en el próximo mantenimiento.');
+        }
+
+        recommendations.add('- Verificación de Presión: Es crucial revisar y ajustar la presión de todos los neumáticos semanalmente según las especificaciones del fabricante.');
+
+        if (recommendations.size === 1) { 
+            return ['- Todos los neumáticos se encuentran en buen estado. Continuar con las revisiones periódicas de presión.'];
+        }
+
+        return Array.from(recommendations);
+    }
+
+    window.generatePdf = async function(recordId) {
+        displayAppMessage('Generando PDF, por favor espera...', 'info');
+        
+        try {
+            const record = window.currentRecords.find(r => r.id === recordId);
+            if (!record) throw new Error('Registro no encontrado.');
+
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF();
+
+            try {
+                if (logoBase64) {
+                    doc.addImage(logoBase64, 'PNG', 15, 10, 50, 16);
+                }
+            } catch (e) {
+                console.error("Error al añadir el logo al PDF. Se generará sin logo.", e);
+            }
+
+            doc.setFontSize(22);
+            doc.setFont('helvetica', 'bold');
+            doc.text("Registro de Desgaste de Neumáticos", 195, 20, { align: 'right' });
+            doc.setLineWidth(0.5);
+            doc.line(15, 30, 195, 30);
+
+            let yPos = 40;
+            doc.setFontSize(12);
+            doc.setFont('helvetica', 'bold');
+            doc.text("Información General", 15, yPos);
+            yPos += 8;
+            doc.setFont('helvetica', 'normal');
+            doc.text(`N° Orden: ${record.orderNumber}`, 15, yPos);
+            doc.text(`Fecha: ${new Date(record.date).toLocaleDateString('es-CL', {timeZone: 'UTC'})}`, 105, yPos);
+            yPos += 7;
+            doc.text(`Sucursal: ${record.branchName}`, 15, yPos);
+            doc.text(`Kilometraje: ${record.mileage.toLocaleString('es-CL')} km`, 105, yPos);
+            yPos += 7;
+            doc.text(`Tipo de Vehículo: ${record.vehicleType}`, 15, yPos);
+            yPos += 7;
+            doc.text(`Marca/Modelo General: ${record.generalMakeModel}`, 15, yPos);
+            yPos += 7;
+            doc.text(`Medida General: ${record.tireSize}`, 15, yPos);
+            yPos += 7;
+            if(record.generalComments) {
+                const splitComments = doc.splitTextToSize(`Comentarios: ${record.generalComments}`, 180);
+                doc.text(splitComments, 15, yPos);
+                yPos += (splitComments.length * 5);
+            }
+
+            const tireData = record.tires.map(t => [t.position, t.makeModel, t.surco1.toFixed(1), t.surco2.toFixed(1), t.surco3.toFixed(1)]);
+            doc.autoTable({
+                startY: yPos + 5,
+                head: [['Posición', 'Marca/Modelo', 'Surco 1 (mm)', 'Surco 2 (mm)', 'Surco 3 (mm)']],
+                body: tireData,
+                theme: 'grid',
+                headStyles: { fillColor: [5, 150, 105] },
+                didParseCell: function (data) {
+                    if (data.column.index >= 2 && data.column.index <= 4) {
+                        let value = parseFloat(data.cell.raw);
+                        if (!isNaN(value) && value < 3.0) {
+                            data.cell.styles.fillColor = '#FFDDE0';
+                            data.cell.styles.textColor = '#900C3F';
+                            data.cell.styles.fontStyle = 'bold';
+                        }
+                    }
+                }
+            });
+
+            yPos = doc.lastAutoTable.finalY + 10;
+            
+            // Sección de Recomendaciones
+            doc.setFontSize(14);
+            doc.setFont('helvetica', 'bold');
+            doc.text("Recomendaciones", 15, yPos);
+            yPos += 8;
+
+            const recommendations = generateRecommendations(record);
+            doc.setFontSize(10);
+            doc.setFont('helvetica', 'normal');
+            doc.setTextColor(40);
+            recommendations.forEach(rec => {
+                if (yPos > 270) { 
+                    doc.addPage();
+                    yPos = 20;
+                }
+                const splitText = doc.splitTextToSize(rec, 180);
+                doc.text(splitText, 15, yPos);
+                yPos += (splitText.length * 5) + 2; 
+            });
+            doc.setTextColor(0);
+
+
+            const imageTires = record.tires.filter(t => t.photoURL && t.photoURL !== 'N/A');
+            if (imageTires.length > 0) {
+                 if (yPos > 180) { // Check if there's enough space for the title and at least one image
+                    doc.addPage();
+                    yPos = 20;
+                }
+                doc.setFontSize(14);
+                doc.setFont('helvetica', 'bold');
+                doc.text("Fotografías Adjuntas", 15, yPos);
+                yPos += 10;
+                
+                const imagePromises = imageTires.map(async (tire) => {
+                    try {
+                        const response = await fetch(tire.photoURL);
+                        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                        const blob = await response.blob();
+                        const imageBase64 = await new Promise((resolve, reject) => {
+                            const reader = new FileReader();
+                            reader.onloadend = () => resolve(reader.result);
+                            reader.onerror = reject;
+                            reader.readAsDataURL(blob);
+                        });
+                        return { tire, imageBase64, status: 'fulfilled' };
+                    } catch (e) {
+                        console.error(`No se pudo cargar la imagen para ${tire.position}:`, e);
+                        return { tire, status: 'rejected' };
+                    }
+                });
+
+                const imageResults = await Promise.all(imagePromises);
+
+                for (const result of imageResults) {
+                     if (yPos > 220) { 
+                        doc.addPage();
+                        yPos = 20;
+                    }
+                    doc.setFontSize(10);
+                    doc.setFont('helvetica', 'normal');
+                    if(result.status === 'fulfilled') {
+                        doc.text(`Posición: ${result.tire.position} (${result.tire.makeModel})`, 15, yPos);
+                        doc.addImage(result.imageBase64, 'JPEG', 15, yPos + 3, 80, 60);
+                        yPos += 70;
+                    } else {
+                        doc.text(`- Imagen no disponible para la posición ${result.tire.position}.`, 15, yPos);
+                        yPos += 7;
+                    }
+                }
+            }
+            
+            doc.output('dataurlnewwindow');
+            
+            displayAppMessage('✅ PDF generado con éxito.', 'success');
+
+        } catch (error) {
+            console.error("Error al generar el PDF:", error);
+            displayAppMessage(`Error al generar el PDF: ${error.message}`, 'error');
+        }
+    }
     
     // === HELPERS Y UI ===
     function setUiState(state, message = '') {
@@ -299,7 +475,6 @@
           const btn = document.getElementById(id);
           if(btn) btn.disabled = disableButtons;
       });
-      // La revisión solo se activa si hay un tipo de vehículo seleccionado
       if(state === 'authenticated' && document.getElementById('vehicleType')?.value) {
           document.getElementById('reviewButton').disabled = false;
       }
@@ -470,9 +645,9 @@
 
     function getPositionDescription(pos) {
       const descriptions = {
-        'I1': 'Eje 1 - Delantera Izquierda (Conductor)', 'D1': 'Eje 1 - Delantera Derecha',
-        'I2': 'Eje 2 - Trasera Izquierda', 'D2': 'Eje 2 - Trasera Derecha',
-        'I3': 'Eje 2 (Interior) - Izquierda (Doble Rodado)', 'D3': 'Eje 2 (Interior) - Derecha (Doble Rodado)',
+        'P1': 'Eje 1 - Delantera Izquierda (Conductor)', 'P2': 'Eje 1 - Delantera Derecha',
+        'P3': 'Eje 2 - Trasera Izquierda', 'P6': 'Eje 2 - Trasera Derecha',
+        'P4': 'Eje 2 (Interior) - Izquierda (Doble Rodado)', 'P5': 'Eje 2 (Interior) - Derecha (Doble Rodado)',
         'Repuesto': 'Rueda de Repuesto'
       };
       return descriptions[pos] || pos;
@@ -526,10 +701,18 @@
             <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${dateStr}</td>
             <td class="px-4 py-3 whitespace-nowrap text-sm ${criticalClass}">${isFinite(minSurco) ? minSurco.toFixed(1) : '-'} mm</td>
             <td class="px-4 py-3 whitespace-nowrap text-right text-sm font-medium">
-              <button onclick="window.analyzeRecord('${record.id}')" class="text-primary hover:text-secondary p-2 rounded-lg transition hover:bg-primary/10 flex items-center gap-2">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3c7.2 0 9 1.8 9 9s-1.8 9-9 9-9-1.8-9-9 1.8-9 9-9"/><path d="M12 15h.01"/><path d="M12 12V9"/></svg>
-                Analizar
-              </button>
+              <div class="flex items-center justify-end gap-2">
+                <button onclick="window.generatePdf('${record.id}')" class="text-red-600 hover:text-red-800 p-2 rounded-lg transition hover:bg-red-100" title="Generar PDF">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                    <path d="M14 14V4.5L9.5 0H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2zM9.5 1.5L14 6v8.5a.5.5 0 0 1-.5.5H4a.5.5 0 0 1-.5-.5v-12A.5.5 0 0 1 4 1.5h5.5z"/>
+                    <path d="M4.603 12.087a.81.81 0 0 1-.438.448l-.175.082a.558.558 0 0 1-.685-.28.52.52 0 0 1 .035-.634l.116-.117.175-.082a.81.81 0 0 1 .438-.448l.175-.082.685.28a.52.52 0 0 1-.035.634l-.116.117-.175.082zm1.833-1.422a.512.512 0 0 1-.028.682l-.206.206a.512.512 0 0 1-.682.028l-.206-.206a.512.512 0 0 1 .028-.682l.206-.206a.512.512 0 0 1 .682-.028l.206.206zm.208.64a.512.512 0 0 1-.028.682l-.206.206a.512.512 0 0 1-.682.028l-.206-.206a.512.512 0 0 1 .028-.682l.206-.206a.512.512 0 0 1 .682-.028l.206.206zm1.758-1.55a.512.512 0 0 1 .686.252l.206.411a.512.512 0 0 1-.252.686l-.411.206a.512.512 0 0 1-.686-.252l-.206-.411a.512.512 0 0 1 .252-.686l.411.206zm.686.645a.512.512 0 0 1 .252.686l-.206.411a.512.512 0 0 1-.686.252l-.411-.206a.512.512 0 0 1-.252-.686l.206-.411a.512.512 0 0 1 .686-.252l.411.206zM8.579 14.3a.512.512 0 0 1 .252.686l-.206.411a.512.512 0 0 1-.686.252l-.411-.206a.512.512 0 0 1-.252-.686l.206-.411a.512.512 0 0 1 .686-.252l.411.206zm2.814-2.97a.512.512 0 0 1 .686.252l.206.411a.512.512 0 0 1-.252.686l-.411.206a.512.512 0 0 1-.686-.252l-.206-.411a.512.512 0 0 1 .252-.686l.411.206zm.686.645a.512.512 0 0 1 .252.686l-.206.411a.512.512 0 0 1-.686.252l-.411-.206a.512.512 0 0 1-.252-.686l.206-.411a.512.512 0 0 1 .686-.252l.411.206zM11.803 14.3a.512.512 0 0 1 .252.686l-.206.411a.512.512 0 0 1-.686.252l-.411-.206a.512.512 0 0 1-.252-.686l.206-.411a.512.512 0 0 1 .686-.252l.411.206z"/>
+                  </svg>
+                </button>
+                <button onclick="window.analyzeRecord('${record.id}')" class="text-primary hover:text-secondary p-2 rounded-lg transition hover:bg-primary/10 flex items-center gap-2">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3c7.2 0 9 1.8 9 9s-1.8 9-9 9-9-1.8-9-9 1.8-9 9-9"/><path d="M12 15h.01"/><path d="M12 12V9"/></svg>
+                  Analizar
+                </button>
+              </div>
             </td>
           </tr>`;
       }).join('');
@@ -748,3 +931,4 @@
   </div>
 </body>
 </html>
+
