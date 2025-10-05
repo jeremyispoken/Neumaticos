@@ -256,7 +256,7 @@
     }
 
     // === GENERACIÓN DE PDF ===
-    const logoUrl = 'https://github.com/jeremyispoken/Neumaticos/blob/818a9a56d8100caf29817a023e0e52ac4e3c4764/LOGO_FV_HQ.png';
+    const logoUrl = 'https://github.com/jeremyispoken/Neumaticos/blob/main/LOGO_FV_HQ.png?raw=true';
 
     window.generatePdf = async function(recordId) {
         displayAppMessage('Generando PDF, por favor espera...', 'info');
@@ -269,8 +269,8 @@
             const doc = new jsPDF();
 
             try {
-                if (logoBase64 && logoBase64 !== 'PEGA_AQUI_TU_NUEVO_CÓDIGO_BASE64_DEL_LOGO') {
-                    doc.addImage(logoBase64, 'PNG', 15, 10, 50, 16);
+                if (logoUrl = 'https://github.com/jeremyispoken/Neumaticos/blob/main/LOGO_FV_HQ.png?raw=true') {
+                    doc.addImage(logoUrl, 'PNG', 15, 10, 50, 16);
                 }
             } catch (e) {
                 console.error("Error al añadir el logo al PDF. Se generará sin logo.", e);
@@ -312,7 +312,7 @@
                 head: [['Posición', 'Marca/Modelo', 'Surco 1 (mm)', 'Surco 2 (mm)', 'Surco 3 (mm)']],
                 body: tireData,
                 theme: 'grid',
-                headStyles: { fillColor: [5, 150, 105] }
+                headStyles: { fillColor: [5, 140, 150] }
             });
 
             yPos = doc.lastAutoTable.finalY + 15;
