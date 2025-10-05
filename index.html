@@ -156,8 +156,24 @@
       unsubscribeRecords = onSnapshot(q, (snapshot) => {
         const records = [];
         snapshot.forEach((doc) => records.push({ id: doc.id, ...doc.data() }));
-        window.currentRecords = records.sort((a, b) => (b.orderNumber || 0) - (a.orderNumber || 0));
-        displayRecords(window.currentRecords);
+        window.currentRecords = records.sort((a, b) => new Date(b.date) - new Date(a.date));
+        
+        const branchFilter = document.getElementById('branchFilter');
+        const uniqueBranches = [...new Set(window.currentRecords.map(r => r.branchName).filter(Boolean))];
+        
+        const currentFilterValue = branchFilter.value;
+        while (branchFilter.options.length > 1) {
+            branchFilter.remove(1);
+        }
+        uniqueBranches.sort().forEach(branch => {
+            const option = document.createElement('option');
+            option.value = branch;
+            option.textContent = branch;
+            branchFilter.appendChild(option);
+        });
+        branchFilter.value = currentFilterValue;
+
+        applyFiltersAndDisplay();
       }, (err) => console.error("Error en onSnapshot:", err));
     }
 
@@ -256,7 +272,7 @@
     }
 
     // === GENERACIÓN DE PDF ===
-    const logoBase64 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAoAAAAFeCAYAAABukM3AAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAE9YSURBVHhe7d15fFTV9f/xT5MkARIssEk2WCCybYVdtgq27f4vuIKKBYQLgoJll1244CIIKC44KuiuKCAqKgoKuOAsCKIiKAgKuy2AbLdlQRDZJrBNsEmYJJn+/midmUxyM3fnzklO8v28Pp/JJTfnzM15SXbu3DlzT/f09MTm5ma/u19+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn-girdim';
+    const logoBase64 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAoAAAAFeCAYAAABukM3AAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAE9YSURBVHhe7d15fFTV9f/xT5MkARIssEk2WCCybYVdtgq27f4vuIKKBYQLgoJll1244CIIKC44KuiuKCAqKgoKuOAsCKIiKAgKuy2AbLdlQRDZJrBNsEmYJJn+/midmUxyM3fnzklO8v28Pp/JJTfnzM15SXbu3DlzT/f09MTm5ma/u19+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn-girdim';
 
     function generateRecommendations(record) {
         const recommendations = new Set();
@@ -443,6 +459,75 @@
             displayAppMessage(`Error al generar el PDF: ${error.message}`, 'error');
         }
     }
+
+    window.generateGeneralReport = function() {
+        if (!window.currentRecords.length) {
+            displayAppMessage('No hay datos para generar un informe.', 'error');
+            return;
+        }
+
+        displayAppMessage('Generando Informe General...', 'info');
+
+        const latestRecordsMap = new Map();
+        window.currentRecords.forEach(record => {
+            if (!latestRecordsMap.has(record.orderNumber) || new Date(record.date) > new Date(latestRecordsMap.get(record.orderNumber).date)) {
+                latestRecordsMap.set(record.orderNumber, record);
+            }
+        });
+        const latestRecords = Array.from(latestRecordsMap.values()).sort((a, b) => a.orderNumber - b.orderNumber);
+
+        const { jsPDF } = window.jspdf;
+        const doc = new jsPDF();
+        
+        try {
+            if (logoBase64) {
+                doc.addImage(logoBase64, 'PNG', 15, 10, 50, 16);
+            }
+        } catch(e) {
+            console.error("Error al añadir el logo al PDF general.", e);
+        }
+
+        doc.setFontSize(22);
+        doc.setFont('helvetica', 'bold');
+        doc.text("Informe General de Flota", 195, 20, { align: 'right' });
+        doc.setFontSize(10);
+        doc.setFont('helvetica', 'normal');
+        doc.text(`Fecha de Emisión: ${new Date().toLocaleDateString('es-CL')}`, 195, 25, { align: 'right' });
+        doc.setLineWidth(0.5);
+        doc.line(15, 30, 195, 30);
+
+        const tableBody = latestRecords.map(record => {
+            const minSurco = (record.tires || []).reduce((min, t) => Math.min(min, t.surco1, t.surco2, t.surco3), 99);
+            return [
+                record.orderNumber,
+                record.vehicleType,
+                record.branchName,
+                new Date(record.date).toLocaleDateString('es-CL', { timeZone: 'UTC' }),
+                `${minSurco.toFixed(1)} mm`
+            ];
+        });
+
+        doc.autoTable({
+            startY: 40,
+            head: [['N° Orden (Vehículo)', 'Tipo', 'Sucursal', 'Última Revisión', 'Surco Mínimo']],
+            body: tableBody,
+            theme: 'grid',
+            headStyles: { fillColor: [5, 150, 105] },
+             didParseCell: function (data) {
+                if (data.column.index === 4) {
+                    let value = parseFloat(data.cell.raw);
+                    if (!isNaN(value) && value < 3.0) {
+                        data.cell.styles.fillColor = '#FFDDE0';
+                        data.cell.styles.textColor = '#900C3F';
+                        data.cell.styles.fontStyle = 'bold';
+                    }
+                }
+            }
+        });
+
+        doc.output('dataurlnewwindow');
+        displayAppMessage('✅ Informe General generado.', 'success');
+    }
     
     // === HELPERS Y UI ===
     function setUiState(state, message = '') {
@@ -487,6 +572,11 @@
       });
       if (tabName === 'guide') updateRandomRecommendation();
       if (tabName === 'register') resetRegistrationForm();
+      if (tabName === 'records') {
+        const filter = document.getElementById('branchFilter');
+        if (filter) filter.value = 'all';
+        applyFiltersAndDisplay();
+      }
     }
 
     function resetRegistrationForm() {
@@ -681,11 +771,22 @@
       document.getElementById('randomTip').innerHTML = tip;
     }
 
+    window.applyFiltersAndDisplay = function() {
+        const filterValue = document.getElementById('branchFilter').value;
+        let filteredRecords = window.currentRecords;
+
+        if (filterValue !== 'all') {
+            filteredRecords = window.currentRecords.filter(record => record.branchName === filterValue);
+        }
+        
+        displayRecords(filteredRecords);
+    }
+
     function displayRecords(records) {
       const container = document.getElementById('recordsTableBody');
       if (!container) return;
       if (!records.length) {
-        container.innerHTML = '<tr><td colspan="7" class="text-center py-8 text-gray-500">No hay registros disponibles.</td></tr>';
+        container.innerHTML = '<tr><td colspan="7" class="text-center py-8 text-gray-500">No hay registros para este filtro.</td></tr>';
         return;
       }
       container.innerHTML = records.map(record => {
@@ -737,6 +838,14 @@
 
     window.exportToCsv = function() {
       if (!window.currentRecords.length) return displayAppMessage('No hay datos para exportar', 'error');
+      
+      const filterValue = document.getElementById('branchFilter').value;
+      let recordsToExport = window.currentRecords;
+
+      if (filterValue !== 'all') {
+          recordsToExport = window.currentRecords.filter(record => record.branchName === filterValue);
+      }
+      
       let csvContent = "data:text/csv;charset=utf-8,";
       const superset = Array.from(new Set(Object.values(TIRES_STRUCTURE).flat()));
       const headers = [
@@ -745,7 +854,7 @@
       ];
       csvContent += headers.join(";") + "\r\n";
 
-      window.currentRecords.forEach(record => {
+      recordsToExport.forEach(record => {
         const tireMap = (record.tires || []).reduce((acc, t) => ({ ...acc, [t.position]: t }), {});
         const row = [
           record.orderNumber, record.branchName || 'N/A', record.mileage, record.date, record.vehicleType,
@@ -788,7 +897,7 @@
   <div id="app-container" class="flex flex-col">
     <!-- Encabezado Fijo -->
     <header class="bg-white shadow-md sticky top-0 z-10">
-      <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-3">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3">
         <div class="flex justify-between items-center">
           <h1 class="text-2xl font-bold text-gray-800">
             <span class="text-primary">Flota</span> TRACK
@@ -801,7 +910,7 @@
       </div>
       <!-- Navegación por Pestañas -->
       <nav class="border-t border-gray-200">
-        <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div class="flex space-x-4 sm:space-x-8 -mb-px">
             <button id="tab-button-guide" onclick="switchTab('guide')" type="button" class="tab-button">Guía Rápida</button>
             <button id="tab-button-register" onclick="switchTab('register')" type="button" class="tab-button">Registrar</button>
@@ -812,7 +921,7 @@
     </header>
 
     <!-- Contenido Principal -->
-    <main class="flex-grow max-w-4xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8">
+    <main class="flex-grow max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8">
       <!-- Mensajes Globales de la App -->
       <div id="appMessage" class="hidden opacity-0 max-h-0 transition-all duration-300"></div>
 
@@ -901,11 +1010,24 @@
       </div>
 
       <div id="tab-content-records" class="hidden">
-         <div class="flex justify-between items-center mb-4">
-            <h2 class="text-xl font-bold text-gray-800">Historial de Registros</h2>
-            <button onclick="exportToCsv()" class="px-4 py-2 bg-secondary text-white font-semibold text-sm rounded-lg shadow-sm hover:bg-primary transition">
-              Exportar a CSV
-            </button>
+         <div class="flex flex-wrap justify-between items-center gap-4 mb-6">
+            <div class="flex items-center gap-4">
+                <h2 class="text-xl font-bold text-gray-800">Historial de Registros</h2>
+                <div>
+                    <label for="branchFilter" class="sr-only">Filtrar por Sucursal</label>
+                    <select id="branchFilter" onchange="applyFiltersAndDisplay()" class="form-control text-sm bg-white">
+                        <option value="all">Todas las sucursales</option>
+                    </select>
+                </div>
+            </div>
+            <div class="flex items-center gap-2">
+                <button onclick="generateGeneralReport()" class="px-4 py-2 bg-blue-600 text-white font-semibold text-sm rounded-lg shadow-sm hover:bg-blue-700 transition">
+                    Informe General
+                </button>
+                <button onclick="exportToCsv()" class="px-4 py-2 bg-secondary text-white font-semibold text-sm rounded-lg shadow-sm hover:bg-primary transition">
+                    Exportar a CSV
+                </button>
+            </div>
         </div>
         <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-x-auto">
             <table class="w-full text-left">
