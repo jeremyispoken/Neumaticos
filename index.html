@@ -33,11 +33,24 @@
     .tab-button.active { border-bottom-color: #059669; font-weight: 600; color: #059669; }
     .form-control { border-radius: 0.5rem; border: 1px solid #d1d5db; padding: 0.5rem 0.75rem; width: 100%; transition: all 0.15s; }
     .form-control:focus { border-color: #059669; box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.2); outline: none; }
+    .filter-input {
+        width: 100%;
+        padding: 4px 8px;
+        border: 1px solid #e5e7eb;
+        border-radius: 0.375rem;
+        font-size: 0.75rem;
+    }
+    .filter-input:focus {
+        outline: none;
+        border-color: #059669;
+        box-shadow: 0 0 0 2px rgba(5, 150, 105, 0.2);
+    }
   </style>
 
-  <!-- Librerías para generar PDF -->
+  <!-- Librerías para generar PDF y Excel -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
@@ -272,8 +285,8 @@
     }
 
     // === GENERACIÓN DE PDF ===
-    const logoBase64 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAoAAAAFeCAYAAABukM3AAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAE9YSURBVHhe7d15fFTV9f/xT5MkARIssEk2WCCybYVdtgq27f4vuIKKBYQLgoJll1244CIIKC44KuiuKCAqKgoKuOAsCKIiKAgKuy2AbLdlQRDZJrBNsEmYJJn+/midmUxyM3fnzklO8v28Pp/JJTfnzM15SXbu3DlzT/f09MTm5ma/u19+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn-girdim';
-
+    const logoBase64 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAoAAAAFeCAYAAABukM3AAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAE9YSURBVHhe7d15fFTV9f/xT5MkARIssEk2WCCybYVdtgq27f4vuIKKBYQLgoJll1244CIIKC44KuiuKCAqKgoKuOAsCKIiKAgKuy2AbLdlQRDZJrBNsEmYJJn+/midmUxyM3fnzklO8v28Pp/JJTfnzM15SXbu3DlzT/f09MTm5ma/u19+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn-girdim';
+    
     function generateRecommendations(record) {
         const recommendations = new Set();
         const replacementThreshold = 3.0;
@@ -303,7 +316,7 @@
 
         recommendations.add('- Verificación de Presión: Es crucial revisar y ajustar la presión de todos los neumáticos semanalmente según las especificaciones del fabricante.');
 
-        if (recommendations.size === 1) { 
+        if (recommendations.size === 1 && !recommendations.has('- Planificar Rotación: Considere rotar los neumáticos para promover un desgaste uniforme en el próximo mantenimiento.')) { 
             return ['- Todos los neumáticos se encuentran en buen estado. Continuar con las revisiones periódicas de presión.'];
         }
 
@@ -379,7 +392,6 @@
 
             yPos = doc.lastAutoTable.finalY + 10;
             
-            // Sección de Recomendaciones
             doc.setFontSize(14);
             doc.setFont('helvetica', 'bold');
             doc.text("Recomendaciones", 15, yPos);
@@ -403,7 +415,7 @@
 
             const imageTires = record.tires.filter(t => t.photoURL && t.photoURL !== 'N/A');
             if (imageTires.length > 0) {
-                 if (yPos > 180) { // Check if there's enough space for the title and at least one image
+                 if (yPos > 180) { 
                     doc.addPage();
                     yPos = 20;
                 }
@@ -468,12 +480,15 @@
 
         displayAppMessage('Generando Informe General...', 'info');
 
+        const { recordsWithKpi, categoryAverages } = calculateKpi(window.currentRecords);
+
         const latestRecordsMap = new Map();
-        window.currentRecords.forEach(record => {
+        recordsWithKpi.forEach(record => {
             if (!latestRecordsMap.has(record.orderNumber) || new Date(record.date) > new Date(latestRecordsMap.get(record.orderNumber).date)) {
                 latestRecordsMap.set(record.orderNumber, record);
             }
         });
+        
         const latestRecords = Array.from(latestRecordsMap.values()).sort((a, b) => a.orderNumber - b.orderNumber);
 
         const { jsPDF } = window.jspdf;
@@ -498,28 +513,44 @@
 
         const tableBody = latestRecords.map(record => {
             const minSurco = (record.tires || []).reduce((min, t) => Math.min(min, t.surco1, t.surco2, t.surco3), 99);
+            const kpmm = record.kpmm !== null ? `${record.kpmm.toLocaleString('es-CL')}` : 'N/A';
             return [
                 record.orderNumber,
                 record.vehicleType,
                 record.branchName,
                 new Date(record.date).toLocaleDateString('es-CL', { timeZone: 'UTC' }),
-                `${minSurco.toFixed(1)} mm`
+                `${minSurco.toFixed(1)} mm`,
+                kpmm
             ];
         });
 
         doc.autoTable({
             startY: 40,
-            head: [['N° Orden (Vehículo)', 'Tipo', 'Sucursal', 'Última Revisión', 'Surco Mínimo']],
+            head: [['N° Orden (Vehículo)', 'Tipo', 'Sucursal', 'Última Revisión', 'Surco Mínimo', 'Rendimiento (km/mm)']],
             body: tableBody,
             theme: 'grid',
             headStyles: { fillColor: [5, 150, 105] },
              didParseCell: function (data) {
+                const record = latestRecords[data.row.index];
+                if (!record) return;
+
                 if (data.column.index === 4) {
                     let value = parseFloat(data.cell.raw);
                     if (!isNaN(value) && value < 3.0) {
                         data.cell.styles.fillColor = '#FFDDE0';
                         data.cell.styles.textColor = '#900C3F';
                         data.cell.styles.fontStyle = 'bold';
+                    }
+                }
+                if (data.column.index === 5) {
+                    const kpmm = record.kpmm;
+                    if (kpmm !== null) {
+                        const avg = categoryAverages[record.vehicleType];
+                        if (avg) {
+                            if (kpmm > avg * 1.15) { data.cell.styles.fillColor = '#D4EDDA'; data.cell.styles.textColor = '#155724'; } 
+                            else if (kpmm < avg * 0.85) { data.cell.styles.fillColor = '#F8D7DA'; data.cell.styles.textColor = '#721C24'; }
+                            else { data.cell.styles.fillColor = '#FFF3CD'; data.cell.styles.textColor = '#856404'; }
+                        }
                     }
                 }
             }
@@ -530,6 +561,63 @@
     }
     
     // === HELPERS Y UI ===
+    function calculateKpi(records) {
+        const recordsWithKpi = [];
+        const vehicleGroups = records.reduce((acc, record) => {
+            const key = record.orderNumber;
+            if (!acc[key]) acc[key] = [];
+            acc[key].push(record);
+            return acc;
+        }, {});
+
+        for (const orderNumber in vehicleGroups) {
+            const group = vehicleGroups[orderNumber].sort((a, b) => a.mileage - b.mileage);
+
+            for (let i = 0; i < group.length; i++) {
+                const currentRecord = { ...group[i] };
+                if (i > 0) {
+                    const prevRecord = group[i - 1];
+                    const kmDiff = currentRecord.mileage - prevRecord.mileage;
+
+                    const getAvgMinTread = (r) => {
+                        if (!r.tires || r.tires.length === 0) return 0;
+                        const minTreads = r.tires.map(t => Math.min(t.surco1, t.surco2, t.surco3));
+                        return minTreads.reduce((sum, val) => sum + val, 0) / minTreads.length;
+                    };
+
+                    const prevAvgTread = getAvgMinTread(prevRecord);
+                    const currentAvgTread = getAvgMinTread(currentRecord);
+                    const wearDiff = prevAvgTread - currentAvgTread;
+
+                    if (kmDiff > 0 && wearDiff > 0) {
+                        currentRecord.kpmm = Math.round(kmDiff / wearDiff);
+                    } else {
+                        currentRecord.kpmm = null;
+                    }
+                } else {
+                    currentRecord.kpmm = null;
+                }
+                recordsWithKpi.push(currentRecord);
+            }
+        }
+        
+        const categoryKpis = recordsWithKpi.reduce((acc, record) => {
+            if (record.kpmm !== null && record.vehicleType) {
+                if (!acc[record.vehicleType]) acc[record.vehicleType] = [];
+                acc[record.vehicleType].push(record.kpmm);
+            }
+            return acc;
+        }, {});
+
+        const categoryAverages = {};
+        for (const type in categoryKpis) {
+            const kpis = categoryKpis[type];
+            categoryAverages[type] = kpis.reduce((sum, val) => sum + val, 0) / kpis.length;
+        }
+
+        return { recordsWithKpi: recordsWithKpi.sort((a,b) => new Date(b.date) - new Date(a.date)), categoryAverages };
+    }
+
     function setUiState(state, message = '') {
       const errorEl = document.getElementById('firebaseErrorDisplay');
       const idEl = document.getElementById('userIdDisplay');
@@ -772,27 +860,48 @@
     }
 
     window.applyFiltersAndDisplay = function() {
+        const { recordsWithKpi, categoryAverages } = calculateKpi(window.currentRecords);
+
         const filterValue = document.getElementById('branchFilter').value;
-        let filteredRecords = window.currentRecords;
+        let filteredRecords = recordsWithKpi;
 
         if (filterValue !== 'all') {
-            filteredRecords = window.currentRecords.filter(record => record.branchName === filterValue);
+            filteredRecords = recordsWithKpi.filter(record => record.branchName === filterValue);
         }
         
-        displayRecords(filteredRecords);
+        displayRecords(filteredRecords, categoryAverages);
     }
 
-    function displayRecords(records) {
+    function displayRecords(records, categoryAverages) {
       const container = document.getElementById('recordsTableBody');
       if (!container) return;
       if (!records.length) {
-        container.innerHTML = '<tr><td colspan="7" class="text-center py-8 text-gray-500">No hay registros para este filtro.</td></tr>';
+        container.innerHTML = '<tr><td colspan="8" class="text-center py-8 text-gray-500">No hay registros para este filtro.</td></tr>';
         return;
       }
       container.innerHTML = records.map(record => {
         const dateStr = record.date ? new Date(record.date).toLocaleDateString('es-CL', {timeZone: 'UTC'}) : '-';
         const minSurco = (record.tires || []).reduce((min, t) => Math.min(min, t.surco1, t.surco2, t.surco3), 99);
         const criticalClass = minSurco < 3.0 ? 'bg-red-100 text-red-800 font-bold' : (minSurco < 5.0 ? 'bg-yellow-100 text-yellow-800' : 'text-gray-700');
+        
+        const kpmm = record.kpmm;
+        let kpmmCell = `<td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500" title="Se necesitan al menos dos registros para calcular el rendimiento">N/A</td>`;
+
+        if (kpmm !== null && categoryAverages) {
+            const avg = categoryAverages[record.vehicleType];
+            let colorClass = 'bg-gray-100';
+            if (avg) {
+                if (kpmm > avg * 1.15) {
+                    colorClass = 'bg-green-100 text-green-800';
+                } else if (kpmm < avg * 0.85) {
+                    colorClass = 'bg-red-100 text-red-800';
+                } else {
+                    colorClass = 'bg-yellow-100 text-yellow-800';
+                }
+            }
+            kpmmCell = `<td class="px-4 py-3 whitespace-nowrap text-sm font-semibold ${colorClass}">${kpmm.toLocaleString('es-CL')}</td>`;
+        }
+
         return `
           <tr class="border-b hover:bg-gray-50 transition">
             <td class="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">${record.orderNumber}</td>
@@ -801,6 +910,7 @@
             <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${(record.mileage || 0).toLocaleString('es-CL')} km</td>
             <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${dateStr}</td>
             <td class="px-4 py-3 whitespace-nowrap text-sm ${criticalClass}">${isFinite(minSurco) ? minSurco.toFixed(1) : '-'} mm</td>
+            ${kpmmCell}
             <td class="px-4 py-3 whitespace-nowrap text-right text-sm font-medium">
               <div class="flex items-center justify-end gap-2">
                 <button onclick="window.generatePdf('${record.id}')" class="text-red-600 hover:text-red-800 p-2 rounded-lg transition hover:bg-red-100" title="Generar PDF">
@@ -837,19 +947,20 @@
     }
 
     window.exportToCsv = function() {
-      if (!window.currentRecords.length) return displayAppMessage('No hay datos para exportar', 'error');
-      
+      const { recordsWithKpi } = calculateKpi(window.currentRecords);
       const filterValue = document.getElementById('branchFilter').value;
-      let recordsToExport = window.currentRecords;
+      let recordsToExport = recordsWithKpi;
 
       if (filterValue !== 'all') {
-          recordsToExport = window.currentRecords.filter(record => record.branchName === filterValue);
+          recordsToExport = recordsWithKpi.filter(record => record.branchName === filterValue);
       }
       
+      if (!recordsToExport.length) return displayAppMessage('No hay datos para exportar', 'error');
+
       let csvContent = "data:text/csv;charset=utf-8,";
       const superset = Array.from(new Set(Object.values(TIRES_STRUCTURE).flat()));
       const headers = [
-        "Orden", "Sucursal", "Kilometraje", "Fecha", "Tipo Vehículo", "Marca General", "Medida", "Comentarios", "ID Técnico",
+        "Orden", "Sucursal", "Kilometraje", "Fecha", "Tipo Vehículo", "Marca General", "Medida", "Comentarios", "ID Técnico", "Rendimiento (km/mm)",
         ...superset.flatMap(pos => [`Modelo_${pos}`, `Surco1_${pos}`, `Surco2_${pos}`, `Surco3_${pos}`, `FotoURL_${pos}`])
       ];
       csvContent += headers.join(";") + "\r\n";
@@ -859,6 +970,7 @@
         const row = [
           record.orderNumber, record.branchName || 'N/A', record.mileage, record.date, record.vehicleType,
           record.generalMakeModel, record.tireSize, `"${(record.generalComments || '').replace(/"/g, '""')}"`, record.technicianId,
+          record.kpmm || '',
           ...superset.flatMap(pos => {
             const t = tireMap[pos];
             return [t ? t.makeModel : '', t ? t.surco1 : '', t ? t.surco2 : '', t ? t.surco3 : '', t && t.photoURL !== 'N/A' ? t.photoURL : ''];
@@ -897,7 +1009,7 @@
   <div id="app-container" class="flex flex-col">
     <!-- Encabezado Fijo -->
     <header class="bg-white shadow-md sticky top-0 z-10">
-      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3">
+      <div class="max-w-screen-xl mx-auto px-4 sm:px-6 lg:px-8 py-3">
         <div class="flex justify-between items-center">
           <h1 class="text-2xl font-bold text-gray-800">
             <span class="text-primary">Flota</span> TRACK
@@ -910,7 +1022,7 @@
       </div>
       <!-- Navegación por Pestañas -->
       <nav class="border-t border-gray-200">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="max-w-screen-xl mx-auto px-4 sm:px-6 lg:px-8">
           <div class="flex space-x-4 sm:space-x-8 -mb-px">
             <button id="tab-button-guide" onclick="switchTab('guide')" type="button" class="tab-button">Guía Rápida</button>
             <button id="tab-button-register" onclick="switchTab('register')" type="button" class="tab-button">Registrar</button>
@@ -921,7 +1033,7 @@
     </header>
 
     <!-- Contenido Principal -->
-    <main class="flex-grow max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8">
+    <main class="flex-grow max-w-screen-xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8">
       <!-- Mensajes Globales de la App -->
       <div id="appMessage" class="hidden opacity-0 max-h-0 transition-all duration-300"></div>
 
@@ -953,7 +1065,7 @@
                 <select id="branchName" name="branchName" class="form-control" required><option value="" disabled selected>Selecciona una sucursal...</option></select>
               </div>
               <div>
-                <label for="orderNumber" class="block text-sm font-medium text-gray-700 mb-1">Número de Orden</label>
+                <label for="orderNumber" class="block text-sm font-medium text-gray-700 mb-1">Número de Orden (Vehículo)</label>
                 <input type="number" id="orderNumber" name="orderNumber" class="form-control" placeholder="Ej: 12345" required />
               </div>
               <div>
@@ -1039,6 +1151,7 @@
                         <th class="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">KM</th>
                         <th class="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">Fecha</th>
                         <th class="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">Surco Mín.</th>
+                        <th class="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">Rendimiento (km/mm)</th>
                         <th class="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider text-right">Acciones</th>
                     </tr>
                 </thead>
