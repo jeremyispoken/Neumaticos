@@ -170,19 +170,45 @@
         window.currentRecords = records.sort((a, b) => new Date(b.date) - new Date(a.date));
         
         const branchFilter = document.getElementById('branchFilter');
+        const branchColumnFilter = document.getElementById('branchColumnFilter');
         const uniqueBranches = [...new Set(window.currentRecords.map(r => r.branchName).filter(Boolean))];
-        
-        const currentFilterValue = branchFilter.value;
-        while (branchFilter.options.length > 1) {
-            branchFilter.remove(1);
+        const sortedBranches = uniqueBranches.sort((a, b) => a.localeCompare(b));
+
+        if (branchFilter) {
+            const currentFilterValue = branchFilter.value;
+            while (branchFilter.options.length > 1) {
+                branchFilter.remove(1);
+            }
+            sortedBranches.forEach(branch => {
+                const option = document.createElement('option');
+                option.value = branch;
+                option.textContent = branch;
+                branchFilter.appendChild(option);
+            });
+            if (currentFilterValue && sortedBranches.includes(currentFilterValue)) {
+                branchFilter.value = currentFilterValue;
+            } else {
+                branchFilter.value = 'all';
+            }
         }
-        uniqueBranches.sort().forEach(branch => {
-            const option = document.createElement('option');
-            option.value = branch;
-            option.textContent = branch;
-            branchFilter.appendChild(option);
-        });
-        branchFilter.value = currentFilterValue;
+
+        if (branchColumnFilter) {
+            const currentColumnValue = branchColumnFilter.value;
+            while (branchColumnFilter.options.length > 1) {
+                branchColumnFilter.remove(1);
+            }
+            sortedBranches.forEach(branch => {
+                const option = document.createElement('option');
+                option.value = branch;
+                option.textContent = branch;
+                branchColumnFilter.appendChild(option);
+            });
+            if (currentColumnValue && sortedBranches.includes(currentColumnValue)) {
+                branchColumnFilter.value = currentColumnValue;
+            } else {
+                branchColumnFilter.value = '';
+            }
+        }
 
         applyFiltersAndDisplay();
       }, (err) => console.error("Error en onSnapshot:", err));
@@ -904,17 +930,166 @@
       document.getElementById('randomTip').innerHTML = tip;
     }
 
-    window.applyFiltersAndDisplay = function() {
-        const { recordsWithKpi, categoryAverages } = calculateKpi(window.currentRecords);
-
-        const filterValue = document.getElementById('branchFilter').value;
-        let filteredRecords = recordsWithKpi;
-
-        if (filterValue !== 'all') {
-            filteredRecords = recordsWithKpi.filter(record => record.branchName === filterValue);
+    function coerceRecordDate(value) {
+      if (!value) return null;
+      if (value instanceof Date) {
+        return Number.isNaN(value.getTime()) ? null : value;
+      }
+      if (typeof value === 'object') {
+        if (typeof value.toDate === 'function') {
+          const date = value.toDate();
+          return Number.isNaN(date.getTime()) ? null : date;
         }
-        
-        displayRecords(filteredRecords, categoryAverages);
+        if (typeof value.seconds === 'number') {
+          const date = new Date(value.seconds * 1000);
+          return Number.isNaN(date.getTime()) ? null : date;
+        }
+      }
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? null : date;
+    }
+
+    function getRecordDateIso(record) {
+      const date = coerceRecordDate(record?.date);
+      if (!date) return '';
+      return date.toISOString().slice(0, 10);
+    }
+
+    function getRecordDateDisplay(record) {
+      const date = coerceRecordDate(record?.date);
+      if (!date) return '-';
+      try {
+        return date.toLocaleDateString('es-CL', { timeZone: 'UTC' });
+      } catch (error) {
+        console.warn('No se pudo formatear la fecha con la configuración regional. Se utilizará ISO.', error);
+        return date.toISOString().slice(0, 10);
+      }
+    }
+
+    function getRecordMinSurco(record) {
+      return (record?.tires || []).reduce((min, tire) => {
+        const values = [tire.surco1, tire.surco2, tire.surco3]
+          .map(value => parseFloat(value))
+          .filter(value => Number.isFinite(value));
+        if (!values.length) return min;
+        const localMin = Math.min(...values);
+        return Math.min(min, localMin);
+      }, Infinity);
+    }
+
+    function getRecordMileage(record) {
+      const raw = record?.mileage;
+      if (typeof raw === 'number') {
+        return Number.isFinite(raw) ? raw : null;
+      }
+      if (typeof raw === 'string') {
+        const cleaned = raw.replace(/[^\d]/g, '');
+        if (!cleaned) return null;
+        const parsed = parseInt(cleaned, 10);
+        return Number.isNaN(parsed) ? null : parsed;
+      }
+      return null;
+    }
+
+    function collectHistoryFilters() {
+      const branchFilter = document.getElementById('branchFilter');
+      const branchColumnFilter = document.getElementById('branchColumnFilter');
+      const orderFilter = document.getElementById('orderFilter');
+      const vehicleFilter = document.getElementById('vehicleFilter');
+      const kmFilter = document.getElementById('kmFilter');
+      const dateFilter = document.getElementById('dateFilter');
+      const surcoFilter = document.getElementById('surcoFilter');
+      const kpmmFilter = document.getElementById('kpmmFilter');
+
+      return {
+        branch: branchFilter ? branchFilter.value : 'all',
+        branchColumn: branchColumnFilter ? branchColumnFilter.value : '',
+        order: orderFilter ? orderFilter.value.trim().toLowerCase() : '',
+        vehicle: vehicleFilter ? vehicleFilter.value.trim().toLowerCase() : '',
+        km: kmFilter ? kmFilter.value.trim() : '',
+        date: dateFilter ? dateFilter.value : '',
+        surco: surcoFilter ? surcoFilter.value.trim() : '',
+        kpmm: kpmmFilter ? kpmmFilter.value.trim() : ''
+      };
+    }
+
+    function filterRecordsByValues(records, filters) {
+      const normalizedBranch = (filters.branch || '').toLowerCase();
+      const normalizedBranchColumn = (filters.branchColumn || '').toLowerCase();
+      const normalizedKmDigits = filters.km.replace(/[^0-9]/g, '');
+      const normalizedKmText = filters.km.toLowerCase();
+      const normalizedSurco = filters.surco.replace(',', '.').trim();
+      const normalizedKpmm = filters.kpmm.replace(',', '.').trim();
+
+      return records.filter(record => {
+        const orderStr = `${record.orderNumber ?? ''}`.toLowerCase();
+        if (filters.order && !orderStr.includes(filters.order)) {
+          return false;
+        }
+
+        const branchName = (record.branchName || '').toLowerCase();
+        if (filters.branch && filters.branch !== 'all' && branchName !== normalizedBranch) {
+          return false;
+        }
+
+        if (filters.branchColumn && !branchName.includes(normalizedBranchColumn)) {
+          return false;
+        }
+
+        const vehicleStr = (record.vehicleType || '').toLowerCase();
+        if (filters.vehicle && !vehicleStr.includes(filters.vehicle)) {
+          return false;
+        }
+
+        if (filters.km) {
+          const mileage = getRecordMileage(record);
+          if (normalizedKmDigits) {
+            const mileageDigits = mileage !== null ? mileage.toString() : '';
+            if (!mileageDigits.includes(normalizedKmDigits)) {
+              return false;
+            }
+          } else {
+            const rawMileage = (record.mileage ?? '').toString().toLowerCase();
+            if (!rawMileage.includes(normalizedKmText)) {
+              return false;
+            }
+          }
+        }
+
+        const recordDateIso = getRecordDateIso(record);
+        if (filters.date && recordDateIso !== filters.date) {
+          return false;
+        }
+
+        if (filters.surco) {
+          const minSurco = getRecordMinSurco(record);
+          const surcoText = Number.isFinite(minSurco) ? minSurco.toFixed(1) : '';
+          if (!surcoText.includes(normalizedSurco)) {
+            return false;
+          }
+        }
+
+        if (filters.kpmm) {
+          const kpmm = typeof record.kpmm === 'number' && Number.isFinite(record.kpmm) ? record.kpmm.toString() : '';
+          if (!kpmm.includes(normalizedKpmm)) {
+            return false;
+          }
+        }
+
+        return true;
+      });
+    }
+
+    function getFilteredDataForHistory() {
+      const { recordsWithKpi, categoryAverages } = calculateKpi(window.currentRecords);
+      const filters = collectHistoryFilters();
+      const filteredRecords = filterRecordsByValues(recordsWithKpi, filters);
+      return { filteredRecords, categoryAverages };
+    }
+
+    window.applyFiltersAndDisplay = function() {
+      const { filteredRecords, categoryAverages } = getFilteredDataForHistory();
+      displayRecords(filteredRecords, categoryAverages);
     }
 
     function displayRecords(records, categoryAverages) {
@@ -925,26 +1100,39 @@
         return;
       }
       container.innerHTML = records.map(record => {
-        const dateStr = record.date ? new Date(record.date).toLocaleDateString('es-CL', {timeZone: 'UTC'}) : '-';
-        const minSurco = (record.tires || []).reduce((min, t) => Math.min(min, t.surco1, t.surco2, t.surco3), 99);
-        const criticalClass = minSurco < 3.0 ? 'bg-red-100 text-red-800 font-bold' : (minSurco < 5.0 ? 'bg-yellow-100 text-yellow-800' : 'text-gray-700');
-        
-        const kpmm = record.kpmm;
+        const dateStr = getRecordDateDisplay(record);
+        const minSurco = getRecordMinSurco(record);
+        const hasSurcoData = Number.isFinite(minSurco);
+        let criticalClass = 'text-gray-500';
+        if (hasSurcoData) {
+          if (minSurco < 3.0) {
+            criticalClass = 'bg-red-100 text-red-800 font-bold';
+          } else if (minSurco < 5.0) {
+            criticalClass = 'bg-yellow-100 text-yellow-800';
+          } else {
+            criticalClass = 'text-gray-700';
+          }
+        }
+
+        const mileage = getRecordMileage(record);
+        const mileageDisplay = mileage !== null ? `${mileage.toLocaleString('es-CL')} km` : '-';
+
+        const kpmm = typeof record.kpmm === 'number' && Number.isFinite(record.kpmm) ? record.kpmm : null;
         let kpmmCell = `<td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500" title="Se necesitan al menos dos registros para calcular el rendimiento">N/A</td>`;
 
         if (kpmm !== null && categoryAverages) {
-            const avg = categoryAverages[record.vehicleType];
-            let colorClass = 'bg-gray-100';
-            if (avg) {
-                if (kpmm > avg * 1.15) {
-                    colorClass = 'bg-green-100 text-green-800';
-                } else if (kpmm < avg * 0.85) {
-                    colorClass = 'bg-red-100 text-red-800';
-                } else {
-                    colorClass = 'bg-yellow-100 text-yellow-800';
-                }
+          const avg = categoryAverages[record.vehicleType];
+          let colorClass = 'bg-gray-100';
+          if (typeof avg === 'number' && Number.isFinite(avg)) {
+            if (kpmm > avg * 1.15) {
+              colorClass = 'bg-green-100 text-green-800';
+            } else if (kpmm < avg * 0.85) {
+              colorClass = 'bg-red-100 text-red-800';
+            } else {
+              colorClass = 'bg-yellow-100 text-yellow-800';
             }
-            kpmmCell = `<td class="px-4 py-3 whitespace-nowrap text-sm font-semibold ${colorClass}">${kpmm.toLocaleString('es-CL')}</td>`;
+          }
+          kpmmCell = `<td class="px-4 py-3 whitespace-nowrap text-sm font-semibold ${colorClass}">${kpmm.toLocaleString('es-CL')}</td>`;
         }
 
         return `
@@ -952,9 +1140,9 @@
             <td class="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">${record.orderNumber}</td>
             <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-600 font-semibold">${record.branchName || 'N/A'}</td>
             <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${record.vehicleType}</td>
-            <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${(record.mileage || 0).toLocaleString('es-CL')} km</td>
+            <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${mileageDisplay}</td>
             <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${dateStr}</td>
-            <td class="px-4 py-3 whitespace-nowrap text-sm ${criticalClass}">${isFinite(minSurco) ? minSurco.toFixed(1) : '-'} mm</td>
+            <td class="px-4 py-3 whitespace-nowrap text-sm ${criticalClass}">${hasSurcoData ? `${minSurco.toFixed(1)} mm` : '-'}</td>
             ${kpmmCell}
             <td class="px-4 py-3 whitespace-nowrap text-right text-sm font-medium">
               <div class="flex items-center justify-end gap-2">
@@ -991,47 +1179,163 @@
       return detail;
     }
 
-    window.exportToCsv = function() {
-      const { recordsWithKpi } = calculateKpi(window.currentRecords);
-      const filterValue = document.getElementById('branchFilter').value;
-      let recordsToExport = recordsWithKpi;
+    function exportFilteredData(format) {
+      const { filteredRecords } = getFilteredDataForHistory();
 
-      if (filterValue !== 'all') {
-          recordsToExport = recordsWithKpi.filter(record => record.branchName === filterValue);
+      if (!filteredRecords.length) {
+        displayAppMessage('No hay datos para exportar con los filtros aplicados.', 'error');
+        return;
       }
-      
-      if (!recordsToExport.length) return displayAppMessage('No hay datos para exportar', 'error');
 
-      let csvContent = "data:text/csv;charset=utf-8,";
-      const superset = Array.from(new Set(Object.values(TIRES_STRUCTURE).flat()));
-      const headers = [
-        "Orden", "Sucursal", "Kilometraje", "Fecha", "Tipo Vehículo", "Marca General", "Medida", "Comentarios", "ID Técnico", "Rendimiento (km/mm)",
-        ...superset.flatMap(pos => [`Modelo_${pos}`, `Surco1_${pos}`, `Surco2_${pos}`, `Surco3_${pos}`, `FotoURL_${pos}`])
-      ];
-      csvContent += headers.join(";") + "\r\n";
+      switch (format) {
+        case 'pdf':
+          exportFilteredToPdf(filteredRecords);
+          break;
+        case 'excel':
+          exportFilteredToExcel(filteredRecords);
+          break;
+        case 'csv':
+          exportFilteredToCsv(filteredRecords);
+          break;
+        default:
+          console.warn('Formato de exportación no soportado:', format);
+      }
+    }
 
-      recordsToExport.forEach(record => {
-        const tireMap = (record.tires || []).reduce((acc, t) => ({ ...acc, [t.position]: t }), {});
-        const row = [
-          record.orderNumber, record.branchName || 'N/A', record.mileage, record.date, record.vehicleType,
-          record.generalMakeModel, record.tireSize, `"${(record.generalComments || '').replace(/"/g, '""')}"`, record.technicianId,
-          record.kpmm || '',
-          ...superset.flatMap(pos => {
-            const t = tireMap[pos];
-            return [t ? t.makeModel : '', t ? t.surco1 : '', t ? t.surco2 : '', t ? t.surco3 : '', t && t.photoURL !== 'N/A' ? t.photoURL : ''];
-          })
+    function exportFilteredToPdf(records) {
+      try {
+        const { jsPDF } = window.jspdf;
+        const doc = new jsPDF();
+        const generatedAt = new Date();
+        doc.setFontSize(14);
+        doc.setFont('helvetica', 'bold');
+        doc.text('Historial de Registros', 14, 16);
+        doc.setFontSize(10);
+        doc.setFont('helvetica', 'normal');
+        doc.text(`Generado: ${generatedAt.toLocaleDateString('es-CL')}`, 14, 22);
+
+        const tableRows = records.map(record => {
+          const mileage = getRecordMileage(record);
+          const minSurco = getRecordMinSurco(record);
+          const kpmm = typeof record.kpmm === 'number' && Number.isFinite(record.kpmm) ? record.kpmm : null;
+
+          return [
+            record.orderNumber || '',
+            record.branchName || 'N/A',
+            record.vehicleType || 'N/A',
+            mileage !== null ? mileage.toLocaleString('es-CL') : '-',
+            getRecordDateDisplay(record),
+            Number.isFinite(minSurco) ? minSurco.toFixed(1) : '-',
+            kpmm !== null ? kpmm.toLocaleString('es-CL') : 'N/A'
+          ];
+        });
+
+        doc.autoTable({
+          startY: 28,
+          head: [['Orden', 'Sucursal', 'Vehículo', 'KM', 'Fecha', 'Surco Mín. (mm)', 'Rendimiento (km/mm)']],
+          body: tableRows,
+          styles: { fontSize: 8 },
+          headStyles: { fillColor: [5, 150, 105], textColor: 255 },
+          alternateRowStyles: { fillColor: [245, 245, 245] },
+          margin: { left: 14, right: 14 }
+        });
+
+        doc.save(`historial_neumaticos_${generatedAt.toISOString().slice(0, 10)}.pdf`);
+        displayAppMessage('Exportación a PDF completada.', 'success');
+      } catch (error) {
+        console.error('Error al exportar a PDF:', error);
+        displayAppMessage('No se pudo exportar a PDF.', 'error');
+      }
+    }
+
+    function exportFilteredToExcel(records) {
+      try {
+        const rows = records.map(record => {
+          const mileage = getRecordMileage(record);
+          const minSurco = getRecordMinSurco(record);
+          const kpmm = typeof record.kpmm === 'number' && Number.isFinite(record.kpmm) ? Number(record.kpmm.toFixed(2)) : '';
+
+          return {
+            'Orden': record.orderNumber || '',
+            'Sucursal': record.branchName || 'N/A',
+            'Vehículo': record.vehicleType || 'N/A',
+            'KM': mileage !== null ? mileage : '',
+            'Fecha': getRecordDateIso(record),
+            'Surco Mín (mm)': Number.isFinite(minSurco) ? Number(minSurco.toFixed(1)) : '',
+            'Rendimiento (km/mm)': kpmm
+          };
+        });
+
+        const worksheet = XLSX.utils.json_to_sheet(rows);
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, 'Historial');
+        XLSX.writeFile(workbook, `historial_neumaticos_${new Date().toISOString().slice(0, 10)}.xlsx`);
+        displayAppMessage('Exportación a Excel completada.', 'success');
+      } catch (error) {
+        console.error('Error al exportar a Excel:', error);
+        displayAppMessage('No se pudo exportar a Excel.', 'error');
+      }
+    }
+
+    function exportFilteredToCsv(records) {
+      try {
+        let csvContent = 'data:text/csv;charset=utf-8,';
+        const superset = Array.from(new Set(Object.values(TIRES_STRUCTURE).flat()));
+        const headers = [
+          'Orden', 'Sucursal', 'Kilometraje', 'Fecha', 'Tipo Vehículo', 'Marca General', 'Medida', 'Comentarios', 'ID Técnico', 'Rendimiento (km/mm)',
+          ...superset.flatMap(pos => [`Modelo_${pos}`, `Surco1_${pos}`, `Surco2_${pos}`, `Surco3_${pos}`, `FotoURL_${pos}`])
         ];
-        csvContent += row.join(";") + "\r\n";
-      });
+        csvContent += headers.join(';') + '\r\n';
 
-      const encodedUri = encodeURI(csvContent);
-      const link = document.createElement("a");
-      link.setAttribute("href", encodedUri);
-      link.setAttribute("download", `registros_neumaticos_${new Date().toISOString().slice(0, 10)}.csv`);
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      displayAppMessage('Exportación a CSV completada.', 'success');
+        records.forEach(record => {
+          const tireMap = (record.tires || []).reduce((acc, tire) => ({ ...acc, [tire.position]: tire }), {});
+          const mileage = getRecordMileage(record);
+          const minifiedComments = (record.generalComments || '').replace(/"/g, '""');
+          const kpmm = typeof record.kpmm === 'number' && Number.isFinite(record.kpmm) ? record.kpmm : '';
+
+          const row = [
+            record.orderNumber || '',
+            record.branchName || 'N/A',
+            mileage !== null ? mileage : '',
+            getRecordDateIso(record),
+            record.vehicleType || '',
+            record.generalMakeModel || '',
+            record.tireSize || '',
+            `"${minifiedComments}"`,
+            record.technicianId || '',
+            kpmm,
+            ...superset.flatMap(pos => {
+              const tire = tireMap[pos];
+              if (!tire) {
+                return ['', '', '', '', ''];
+              }
+              const surco1 = tire.surco1 ?? '';
+              const surco2 = tire.surco2 ?? '';
+              const surco3 = tire.surco3 ?? '';
+              const photo = tire.photoURL && tire.photoURL !== 'N/A' ? tire.photoURL : '';
+              return [tire.makeModel || '', surco1, surco2, surco3, photo];
+            })
+          ];
+
+          csvContent += row.join(';') + '\r\n';
+        });
+
+        const encodedUri = encodeURI(csvContent);
+        const link = document.createElement('a');
+        link.setAttribute('href', encodedUri);
+        link.setAttribute('download', `registros_neumaticos_${new Date().toISOString().slice(0, 10)}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        displayAppMessage('Exportación a CSV completada.', 'success');
+      } catch (error) {
+        console.error('Error al exportar a CSV:', error);
+        displayAppMessage('No se pudo exportar a CSV.', 'error');
+      }
+    }
+
+    window.exportToCsv = function() {
+      exportFilteredData('csv');
     }
     
     // === INICIO DE LA APP ===
@@ -1043,7 +1347,41 @@
         PREDEFINED_MODELS.forEach(m => makeModelSelect.insertAdjacentHTML('beforeend', `<option value="${m}">${m}</option>`));
         PREDEFINED_SIZES.forEach(s => tireSizeSelect.insertAdjacentHTML('beforeend', `<option value="${s}">${s}</option>`));
         BRANCHES.forEach(b => branchSelect.insertAdjacentHTML('beforeend', `<option value="${b}">${b}</option>`));
-        
+
+        const exportMenuButton = document.getElementById('exportMenuButton');
+        const exportMenu = document.getElementById('exportMenu');
+        if (exportMenuButton && exportMenu) {
+          const toggleMenu = (shouldShow) => {
+            if (shouldShow) {
+              exportMenu.classList.remove('hidden');
+              exportMenuButton.setAttribute('aria-expanded', 'true');
+            } else {
+              exportMenu.classList.add('hidden');
+              exportMenuButton.setAttribute('aria-expanded', 'false');
+            }
+          };
+
+          exportMenuButton.addEventListener('click', (event) => {
+            event.stopPropagation();
+            const shouldShow = exportMenu.classList.contains('hidden');
+            toggleMenu(shouldShow);
+          });
+
+          document.addEventListener('click', (event) => {
+            if (!exportMenu.contains(event.target) && !exportMenuButton.contains(event.target) && !exportMenu.classList.contains('hidden')) {
+              toggleMenu(false);
+            }
+          });
+
+          exportMenu.querySelectorAll('button[data-export]').forEach(button => {
+            button.addEventListener('click', (event) => {
+              event.stopPropagation();
+              toggleMenu(false);
+              exportFilteredData(button.dataset.export);
+            });
+          });
+        }
+
         window.switchTab('guide');
       });
     }
@@ -1181,9 +1519,28 @@
                 <button onclick="generateGeneralReport()" class="px-4 py-2 bg-blue-600 text-white font-semibold text-sm rounded-lg shadow-sm hover:bg-blue-700 transition">
                     Informe General
                 </button>
-                <button onclick="exportToCsv()" class="px-4 py-2 bg-secondary text-white font-semibold text-sm rounded-lg shadow-sm hover:bg-primary transition">
-                    Exportar a CSV
-                </button>
+                <div class="relative" id="exportMenuWrapper">
+                    <button id="exportMenuButton" type="button" class="px-4 py-2 bg-secondary text-white font-semibold text-sm rounded-lg shadow-sm hover:bg-primary transition flex items-center gap-2" aria-haspopup="true" aria-expanded="false">
+                        Exportar
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+                        </svg>
+                    </button>
+                    <div id="exportMenu" class="absolute right-0 mt-2 w-44 bg-white border border-gray-200 rounded-lg shadow-lg py-1 hidden z-10">
+                        <button type="button" data-export="pdf" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2">
+                            <span class="inline-flex w-2 h-2 rounded-full bg-red-500"></span>
+                            PDF
+                        </button>
+                        <button type="button" data-export="excel" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2">
+                            <span class="inline-flex w-2 h-2 rounded-full bg-green-500"></span>
+                            Excel
+                        </button>
+                        <button type="button" data-export="csv" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2">
+                            <span class="inline-flex w-2 h-2 rounded-full bg-amber-500"></span>
+                            CSV
+                        </button>
+                    </div>
+                </div>
             </div>
         </div>
         <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-x-auto">
@@ -1198,6 +1555,32 @@
                         <th class="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">Surco Mín.</th>
                         <th class="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">Rendimiento (km/mm)</th>
                         <th class="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider text-right">Acciones</th>
+                    </tr>
+                    <tr class="bg-white">
+                        <th class="px-4 py-2">
+                            <input id="orderFilter" type="text" placeholder="Buscar orden" class="filter-input bg-white" oninput="applyFiltersAndDisplay()" />
+                        </th>
+                        <th class="px-4 py-2">
+                            <select id="branchColumnFilter" class="filter-input bg-white" onchange="applyFiltersAndDisplay()">
+                                <option value="">Todas</option>
+                            </select>
+                        </th>
+                        <th class="px-4 py-2">
+                            <input id="vehicleFilter" type="text" placeholder="Buscar vehículo" class="filter-input bg-white" oninput="applyFiltersAndDisplay()" />
+                        </th>
+                        <th class="px-4 py-2">
+                            <input id="kmFilter" type="text" placeholder="Filtrar km" class="filter-input bg-white" oninput="applyFiltersAndDisplay()" />
+                        </th>
+                        <th class="px-4 py-2">
+                            <input id="dateFilter" type="date" class="filter-input bg-white" onchange="applyFiltersAndDisplay()" />
+                        </th>
+                        <th class="px-4 py-2">
+                            <input id="surcoFilter" type="text" placeholder="Mínimo mm" class="filter-input bg-white" oninput="applyFiltersAndDisplay()" />
+                        </th>
+                        <th class="px-4 py-2">
+                            <input id="kpmmFilter" type="text" placeholder="Filtrar kpmm" class="filter-input bg-white" oninput="applyFiltersAndDisplay()" />
+                        </th>
+                        <th class="px-4 py-2"></th>
                     </tr>
                 </thead>
                 <tbody id="recordsTableBody">
