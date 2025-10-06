@@ -85,9 +85,10 @@
     const PREDEFINED_MODELS = [
       'Michelin X Multiway 3D XZE', 'Pirelli FH:01 Energy', 'Bridgestone R260', 'Dunlop SP338', 'Goodyear KMAX S', 'Continental HT3', 'Hankook SmartFlex AH31', 'Westlake CB867', 'Sailun S701'
     ];
-    const PREDEFINED_SIZES = ['225/75R16', '215/75R16', '275/80R22.5'];
+    const PREDEFINED_SIZES = ['225/75R16', '245/70R19.5', '275/80R22.5', '295/80R22.5', '315/80R22.5', '11R22.5', '12R22.5', '10.00R20'];
     const FLEET_SHARE_ID = 'u!aHR0cHM6Ly8xZHJ2Lm1zL3gvYy80ZTllNTI1OTI0MGMzNzFiL0VSczNEQ1JaVXA0Z2dFNlJBQUFBQUFBQlRScUl1ZGJRRXRWUDN3akdkSVkxbXc_ZT13Z0tvUTk';
-    const FLEET_DOWNLOAD_URL = `https://api.onedrive.com/v1.0/shares/${FLEET_SHARE_ID}/root/content`;
+    const FLEET_GRAPH_CONTENT_URL = `https://graph.microsoft.com/v1.0/shares/${FLEET_SHARE_ID}/driveItem/content`;
+    const FLEET_GITHUB_FALLBACK_URL = 'https://raw.githubusercontent.com/jeremyispoken/Neumaticos/4964bf87b8cf5f423cc3e55eed17951b4e8dc36d/DATAVEHICULOS';
     const FLEET_SHEET_NAME = 'Flota Verschae';
     const ORDER_KEYWORDS = ['orden', 'n° orden', 'nº orden', 'numero orden', 'orden vehículo', 'orden vehiculo'];
     const MOBILE_KEYWORDS = ['móvil', 'movil', 'n° movil', 'nº movil', 'nro movil', 'numero movil'];
@@ -95,6 +96,12 @@
     const MILEAGE_KEYWORDS = ['kilometraje', 'km', 'kilometros', 'kilómetros', 'odometro', 'odómetro'];
     const FLEET_FALLBACK_INDEX = { order: 2, mobile: 2, plate: 3, mileage: 13 };
     const CATALOG_STORAGE_KEY = 'flota-track-catalog';
+    const ONEDRIVE_TOKEN_ENDPOINT = 'https://login.microsoftonline.com/consumers/oauth2/v2.0/token';
+    const ONEDRIVE_CLIENT_ID = '04b07795-8ddb-461a-bbee-02f9e1bf7b46';
+    const ONEDRIVE_SCOPE = 'https://graph.microsoft.com/.default offline_access';
+    const ONEDRIVE_USERNAME = 'verschae@outlook.com';
+    const ONEDRIVE_PASSWORD = 'Berlioz5761';
+    const ONEDRIVE_SESSION_STORAGE_KEY = 'flota-track-onedrive-session';
     const longevityTips = [
       "Mantén la <strong>presión correcta</strong> semanalmente. La subinflación es el principal asesino de neumáticos.",
       "Realiza la <strong>rotación</strong> cada 10–12 mil km para asegurar un desgaste uniforme.",
@@ -119,6 +126,8 @@
     let fleetLoadError = '';
     let customModels = [];
     let customSizes = [];
+    let onedriveSession = restoreOneDriveSession();
+    let onedriveAuthPromise = null;
 
     function normalizeOrderKey(value) {
       if (value === null || value === undefined) return '';
@@ -140,6 +149,109 @@
       const value = row[index];
       if (value === null || value === undefined) return '';
       return String(value).trim();
+    }
+
+    function restoreOneDriveSession() {
+      const defaultSession = { accessToken: '', refreshToken: '', expiresAt: 0 };
+      try {
+        const stored = sessionStorage.getItem(ONEDRIVE_SESSION_STORAGE_KEY);
+        if (!stored) return { ...defaultSession };
+        const parsed = JSON.parse(stored);
+        return {
+          accessToken: typeof parsed.accessToken === 'string' ? parsed.accessToken : '',
+          refreshToken: typeof parsed.refreshToken === 'string' ? parsed.refreshToken : '',
+          expiresAt: typeof parsed.expiresAt === 'number' ? parsed.expiresAt : 0,
+        };
+      } catch (error) {
+        console.warn('No se pudo restaurar la sesión de OneDrive almacenada:', error);
+        return { ...defaultSession };
+      }
+    }
+
+    function persistOneDriveSession(session) {
+      try {
+        sessionStorage.setItem(ONEDRIVE_SESSION_STORAGE_KEY, JSON.stringify(session));
+      } catch (error) {
+        console.warn('No se pudo persistir la sesión de OneDrive:', error);
+      }
+    }
+
+    function clearOneDriveSession() {
+      onedriveSession = { accessToken: '', refreshToken: '', expiresAt: 0 };
+      persistOneDriveSession(onedriveSession);
+    }
+
+    async function ensureOneDriveAccessToken({ forceRefresh = false } = {}) {
+      const now = Date.now();
+      if (!forceRefresh && onedriveSession.accessToken && now < (onedriveSession.expiresAt - 60000)) {
+        return onedriveSession.accessToken;
+      }
+
+      if (onedriveAuthPromise) {
+        return onedriveAuthPromise;
+      }
+
+      onedriveAuthPromise = (async () => {
+        if (!forceRefresh && onedriveSession.refreshToken) {
+          try {
+            return await requestOneDriveToken({ grantType: 'refresh_token', refreshToken: onedriveSession.refreshToken });
+          } catch (error) {
+            console.warn('No se pudo refrescar el token de OneDrive:', error);
+          }
+        }
+        return await requestOneDriveToken({ grantType: 'password' });
+      })()
+        .catch((error) => {
+          clearOneDriveSession();
+          throw error;
+        })
+        .finally(() => {
+          onedriveAuthPromise = null;
+        });
+
+      return onedriveAuthPromise;
+    }
+
+    async function requestOneDriveToken({ grantType, refreshToken }) {
+      const params = new URLSearchParams({
+        client_id: ONEDRIVE_CLIENT_ID,
+        scope: ONEDRIVE_SCOPE,
+      });
+
+      if (grantType === 'refresh_token') {
+        params.set('grant_type', 'refresh_token');
+        params.set('refresh_token', refreshToken || '');
+      } else {
+        params.set('grant_type', 'password');
+        params.set('username', ONEDRIVE_USERNAME);
+        params.set('password', ONEDRIVE_PASSWORD);
+      }
+
+      const response = await fetch(ONEDRIVE_TOKEN_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: params,
+        cache: 'no-store',
+        credentials: 'omit',
+      });
+
+      if (!response.ok) {
+        throw new Error(`Error ${response.status} al autenticar en OneDrive.`);
+      }
+
+      const payload = await response.json();
+      if (!payload.access_token) {
+        throw new Error('La autenticación de OneDrive no devolvió un access_token.');
+      }
+
+      const expiresIn = Number(payload.expires_in) || 3600;
+      onedriveSession = {
+        accessToken: payload.access_token,
+        refreshToken: typeof payload.refresh_token === 'string' ? payload.refresh_token : (refreshToken || ''),
+        expiresAt: Date.now() + Math.max(60, expiresIn - 60) * 1000,
+      };
+      persistOneDriveSession(onedriveSession);
+      return onedriveSession.accessToken;
     }
 
     function loadCatalogFromStorage() {
@@ -420,18 +532,11 @@
     }
 
     async function loadFleetDataset() {
-      if (typeof XLSX === 'undefined') {
-        console.warn('La librería XLSX no está disponible.');
-        return;
-      }
       setOrderInputState('loading');
       try {
-        const response = await fetch(FLEET_DOWNLOAD_URL, { cache: 'no-store', mode: 'cors' });
-        if (!response.ok) {
-          throw new Error(`Error ${response.status} al obtener la planilla`);
-        }
-        const arrayBuffer = await response.arrayBuffer();
-        parseFleetWorkbook(arrayBuffer);
+        const { entries, lookup } = await fetchFleetDataset();
+        fleetEntries = entries;
+        fleetLookup = lookup;
         setOrderInputState('ready');
         refreshOrderDatalist();
         handleOrderNumberInput();
@@ -443,6 +548,105 @@
       }
     }
 
+    async function downloadOneDriveWorkbook({ allowRetry = true, forceReauth = false } = {}) {
+      const token = await ensureOneDriveAccessToken({ forceRefresh: forceReauth });
+      if (!token) {
+        throw new Error('No se pudo obtener un token de acceso para OneDrive.');
+      }
+
+      const response = await fetch(FLEET_GRAPH_CONTENT_URL, {
+        method: 'GET',
+        cache: 'no-store',
+        mode: 'cors',
+        credentials: 'omit',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/octet-stream',
+        },
+      });
+
+      if (response.status === 401 || response.status === 403) {
+        if (allowRetry) {
+          console.warn('Token de OneDrive rechazado, reintentando autenticación completa…');
+          clearOneDriveSession();
+          return downloadOneDriveWorkbook({ allowRetry: false, forceReauth: true });
+        }
+        throw new Error(`Acceso denegado por OneDrive (${response.status}).`);
+      }
+
+      if (!response.ok) {
+        throw new Error(`Error ${response.status} al obtener la planilla desde OneDrive.`);
+      }
+
+      return response.arrayBuffer();
+    }
+
+    async function fetchFleetDataset() {
+      const hasSpreadsheetParser = typeof XLSX !== 'undefined';
+      const errors = [];
+
+      // 1) Intento directo a OneDrive autenticado
+      if (hasSpreadsheetParser) {
+        try {
+          const arrayBuffer = await downloadOneDriveWorkbook();
+          return parseFleetWorkbook(arrayBuffer);
+        } catch (error) {
+          errors.push(error);
+          console.warn('Fallo al descargar desde OneDrive autenticado, intentando respaldo GitHub…', error);
+        }
+      } else {
+        errors.push(new Error('XLSX no disponible para leer la planilla de OneDrive.'));
+      }
+
+      // 2) Respaldo en GitHub (permite actualizar manualmente el dataset)
+      try {
+        const response = await fetch(FLEET_GITHUB_FALLBACK_URL, { cache: 'no-store', mode: 'cors' });
+        if (!response.ok) {
+          throw new Error(`Error ${response.status} al obtener el respaldo de GitHub`);
+        }
+
+        const contentType = (response.headers.get('content-type') || '').toLowerCase();
+        if (hasSpreadsheetParser && (contentType.includes('spreadsheetml') || contentType.includes('application/octet-stream'))) {
+          const arrayBuffer = await response.arrayBuffer();
+          return parseFleetWorkbook(arrayBuffer);
+        }
+
+        const textPayload = await response.text();
+        const trimmed = textPayload.trim();
+
+        if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+          const json = JSON.parse(trimmed);
+          return parseFleetJson(json);
+        }
+
+        if (trimmed.startsWith('http')) {
+          // El archivo de respaldo puede contener un enlace actualizado.
+          if (hasSpreadsheetParser) {
+            const arrayBuffer = await fetchAsArrayBuffer(trimmed);
+            return parseFleetWorkbook(arrayBuffer);
+          }
+          throw new Error('Se requiere XLSX para leer el enlace alternativo de la planilla.');
+        }
+
+        return parseFleetCsv(trimmed);
+      } catch (error) {
+        errors.push(error);
+        console.error('Fallo al usar el respaldo GitHub:', error);
+      }
+
+      const combinedError = new Error(errors.map(err => err?.message || String(err)).join(' | '));
+      combinedError.details = errors;
+      throw combinedError;
+    }
+
+    async function fetchAsArrayBuffer(url) {
+      const response = await fetch(url, { cache: 'no-store', mode: 'cors' });
+      if (!response.ok) {
+        throw new Error(`Error ${response.status} al obtener ${url}`);
+      }
+      return response.arrayBuffer();
+    }
+
     function parseFleetWorkbook(arrayBuffer) {
       const workbook = XLSX.read(arrayBuffer, { type: 'array' });
       const sheet = workbook.Sheets[FLEET_SHEET_NAME];
@@ -450,14 +654,65 @@
         throw new Error(`La hoja "${FLEET_SHEET_NAME}" no existe en el archivo.`);
       }
       const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+      return buildFleetEntriesFromRows(rows);
+    }
+
+    function parseFleetJson(jsonPayload) {
+      if (!Array.isArray(jsonPayload)) {
+        throw new Error('El respaldo JSON de flota debe ser un arreglo.');
+      }
+      const entries = [];
+      const lookup = new Map();
+      jsonPayload.forEach((item) => {
+        if (!item) return;
+        const displayOrder = item.orderNumber || item.orden || item.order || '';
+        const normalizedOrder = normalizeOrderKey(displayOrder || item.mobile || item.movil);
+        if (!normalizedOrder) return;
+        const plate = String(item.plate || item.patente || '').toUpperCase().trim();
+        const mileageValue = item.mileage ?? item.kilometraje ?? item.km ?? null;
+        const mileage = mileageValue === null || mileageValue === undefined ? null : parseInt(String(mileageValue).replace(/[^0-9]/g, ''), 10);
+        const entry = {
+          orderNumber: displayOrder || normalizedOrder,
+          normalizedOrder,
+          plate,
+          mileage: Number.isFinite(mileage) ? mileage : null
+        };
+        entries.push(entry);
+        if (!lookup.has(normalizedOrder)) {
+          lookup.set(normalizedOrder, entry);
+        }
+      });
+      if (!entries.length) {
+        throw new Error('El respaldo JSON no contiene registros válidos.');
+      }
+      return { entries, lookup };
+    }
+
+    function parseFleetCsv(textPayload) {
+      const rows = textPayload.split(/\r?\n/).map(row => row.split(/\s*[,;\t]\s*/));
+      return buildFleetEntriesFromRows(rows);
+    }
+
+    function buildFleetEntriesFromRows(rows) {
       if (!rows.length) {
         throw new Error('La hoja seleccionada está vacía.');
       }
       const headers = rows[0];
-      const orderIndex = findColumnIndex(headers, ORDER_KEYWORDS, FLEET_FALLBACK_INDEX.order);
-      const mobileIndex = findColumnIndex(headers, MOBILE_KEYWORDS, FLEET_FALLBACK_INDEX.mobile);
-      const plateIndex = findColumnIndex(headers, PLATE_KEYWORDS, FLEET_FALLBACK_INDEX.plate);
-      const mileageIndex = findColumnIndex(headers, MILEAGE_KEYWORDS, FLEET_FALLBACK_INDEX.mileage);
+      const maxColumns = rows.reduce((max, row) => Array.isArray(row) ? Math.max(max, row.length) : max, Array.isArray(headers) ? headers.length : 0);
+      const clampIndex = (candidate, fallbackPreference) => {
+        if (typeof candidate === 'number' && candidate >= 0 && candidate < maxColumns) {
+          return candidate;
+        }
+        const adjusted = typeof fallbackPreference === 'number' ? fallbackPreference : 0;
+        if (maxColumns === 0) return 0;
+        if (adjusted >= 0 && adjusted < maxColumns) return adjusted;
+        return Math.max(0, Math.min(maxColumns - 1, adjusted));
+      };
+
+      const orderIndex = clampIndex(findColumnIndex(headers, ORDER_KEYWORDS, FLEET_FALLBACK_INDEX.order), 0);
+      const mobileIndex = clampIndex(findColumnIndex(headers, MOBILE_KEYWORDS, FLEET_FALLBACK_INDEX.mobile), orderIndex);
+      const plateIndex = clampIndex(findColumnIndex(headers, PLATE_KEYWORDS, FLEET_FALLBACK_INDEX.plate), Math.min(1, maxColumns - 1));
+      const mileageIndex = clampIndex(findColumnIndex(headers, MILEAGE_KEYWORDS, FLEET_FALLBACK_INDEX.mileage), Math.min(2, maxColumns - 1));
 
       const entries = [];
       const lookup = new Map();
@@ -471,7 +726,7 @@
         if (!normalizedOrder) return;
         const plate = safeCellValue(row, plateIndex).toUpperCase();
         const mileageValue = safeCellValue(row, mileageIndex);
-        const mileage = mileageValue ? parseInt(mileageValue.replace(/[^0-9]/g, ''), 10) : null;
+        const mileage = mileageValue ? parseInt(String(mileageValue).replace(/[^0-9]/g, ''), 10) : null;
         const entry = {
           orderNumber: displayOrder || normalizedOrder,
           normalizedOrder,
@@ -488,8 +743,7 @@
         throw new Error('No se encontraron registros válidos en la hoja.');
       }
 
-      fleetEntries = entries;
-      fleetLookup = lookup;
+      return { entries, lookup };
     }
 
     function compareOrderNumbers(a, b) {
@@ -528,183 +782,7 @@
 
         onAuthStateChanged(auth, user => {
           if (user) {
-            currentUserId = user.uid;
-            authReady = true;
-            setUiState('authenticated', `ID: ${currentUserId.substring(0, 8)}...`);
-            if (window.currentRecords.length === 0) {
-              loadRecords();
-            }
-          } else {
-            currentUserId = null;
-            authReady = false;
-            setUiState('unauthenticated');
-          }
-        });
-
-        await attemptInitialSignIn();
-
-      } catch (e) {
-        setUiState('error', 'Error crítico al iniciar Firebase.');
-        console.error("Error crítico de inicialización de Firebase:", e);
-      }
-    }
-
-    async function attemptInitialSignIn() {
-      try {
-        await signInAnonymously(auth);
-      } catch (error) {
-        console.error("Fallo el intento de inicio de sesión:", error.code, error.message);
-        let friendlyMessage = "Error de autenticación desconocido.";
-        switch (error.code) {
-          case 'auth/network-request-failed':
-            friendlyMessage = "Falla de red. Revisa tu conexión.";
-            break;
-          case 'auth/operation-not-allowed':
-            friendlyMessage = "Inicio de sesión anónimo no habilitado.";
-            break;
-        }
-        setUiState('error', friendlyMessage);
-      }
-    }
-    
-    // === GESTIÓN DE DATOS (FIRESTORE) ===
-    function loadRecords() {
-      if (!db || !authReady) return;
-      if (typeof unsubscribeRecords === 'function') {
-        unsubscribeRecords();
-      }
-      const recordsRef = collection(db, `/artifacts/${appId}/public/data/tire_records`);
-      const q = query(recordsRef);
-
-      unsubscribeRecords = onSnapshot(q, (snapshot) => {
-        const records = [];
-        snapshot.forEach((doc) => records.push({ id: doc.id, ...doc.data() }));
-        window.currentRecords = records.sort((a, b) => new Date(b.date) - new Date(a.date));
-        
-        const branchFilter = document.getElementById('branchFilter');
-        const branchColumnFilter = document.getElementById('branchColumnFilter');
-        const uniqueBranches = [...new Set(window.currentRecords.map(r => r.branchName).filter(Boolean))];
-        const sortedBranches = uniqueBranches.sort((a, b) => a.localeCompare(b));
-
-        if (branchFilter) {
-            const currentFilterValue = branchFilter.value;
-            while (branchFilter.options.length > 1) {
-                branchFilter.remove(1);
-            }
-            sortedBranches.forEach(branch => {
-                const option = document.createElement('option');
-                option.value = branch;
-                option.textContent = branch;
-                branchFilter.appendChild(option);
-            });
-            if (currentFilterValue && sortedBranches.includes(currentFilterValue)) {
-                branchFilter.value = currentFilterValue;
-            } else {
-                branchFilter.value = 'all';
-            }
-        }
-
-        if (branchColumnFilter) {
-            const currentColumnValue = branchColumnFilter.value;
-            while (branchColumnFilter.options.length > 1) {
-                branchColumnFilter.remove(1);
-            }
-            sortedBranches.forEach(branch => {
-                const option = document.createElement('option');
-                option.value = branch;
-                option.textContent = branch;
-                branchColumnFilter.appendChild(option);
-            });
-            if (currentColumnValue && sortedBranches.includes(currentColumnValue)) {
-                branchColumnFilter.value = currentColumnValue;
-            } else {
-                branchColumnFilter.value = '';
-            }
-        }
-
-        applyFiltersAndDisplay();
-      }, (err) => console.error("Error en onSnapshot:", err));
-    }
-
-    async function convertImageFileToDataUrl(file) {
-      if (!(file instanceof File)) {
-        throw new Error('Archivo inválido.');
-      }
-
-      if (!file.type.startsWith('image/')) {
-        throw new Error('Solo se permiten imágenes.');
-      }
-
-      const maxDimension = 1280;
-      const objectUrl = URL.createObjectURL(file);
-
-      try {
-        const image = await new Promise((resolve, reject) => {
-          const img = new Image();
-          img.onload = () => resolve(img);
-          img.onerror = () => reject(new Error('No se pudo cargar la imagen.'));
-          img.src = objectUrl;
-        });
-
-        let { width, height } = image;
-        if (width > maxDimension || height > maxDimension) {
-          const ratio = Math.min(maxDimension / width, maxDimension / height);
-          width = Math.round(width * ratio);
-          height = Math.round(height * ratio);
-        }
-
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-          throw new Error('No se pudo preparar el lienzo para la imagen.');
-        }
-        ctx.drawImage(image, 0, 0, width, height);
-
-        const mimeType = file.type === 'image/png' ? 'image/png' : 'image/jpeg';
-        const quality = mimeType === 'image/jpeg' ? 0.82 : undefined;
-        return canvas.toDataURL(mimeType, quality);
-      } finally {
-        URL.revokeObjectURL(objectUrl);
-      }
-    }
-    
-    // === LÓGICA DE LA APLICACIÓN ===
-    window.handleSave = async function() {
-      if (!authReady || !window.pendingReviewData) {
-        return displayAppMessage(authReady ? 'Evalúa antes de guardar' : 'Error de autenticación.', 'error');
-      }
-
-      const data = window.pendingReviewData;
-      const saveBtn = document.getElementById('saveButton');
-      saveBtn.disabled = true;
-      saveBtn.innerHTML = getLoaderSvg('Guardando...');
-
-      try {
-        const processedPhotos = await Promise.all((data.photoFiles || []).map(async item => {
-          try {
-            const dataUrl = await convertImageFileToDataUrl(item.file);
-            return { position: item.position, dataUrl };
-          } catch (conversionError) {
-            console.error(`No se pudo procesar la imagen (${item.position}):`, conversionError);
-            return { position: item.position, dataUrl: null };
-          }
-        }));
-
-        if (processedPhotos.some(photo => !photo.dataUrl)) {
-          displayAppMessage('⚠️ Algunas fotografías no pudieron procesarse y se omitieron.', 'warning');
-        }
-
-        data.tires = data.tires.map(tire => {
-          const foundPhoto = processedPhotos.find(p => p.position === tire.position);
-          return { ...tire, photoURL: foundPhoto && foundPhoto.dataUrl ? foundPhoto.dataUrl : 'N/A' };
-        });
-
-        const { photoFiles, ...finalRecord } = { ...data, timestamp: serverTimestamp() };
-        const recordsRef = collection(db, `/artifacts/${appId}/public/data/tire_records`);
-        await addDoc(recordsRef, finalRecord);
-
+@@ -296,81 +962,89 @@
         displayAppMessage('✅ Registro guardado con éxito', 'success');
         resetRegistrationForm();
         window.switchTab('records');
@@ -794,167 +872,7 @@
             }
 
             if (diff >= irregularWearThreshold) {
-                recommendations.add(`- Revisar Alineación y Balanceo: Se detectó desgaste irregular en la posición ${tire.position} (diferencia de ${diff.toFixed(1)} mm).`);
-            }
-        });
-
-        if (record.tires.length > 2) {
-             recommendations.add('- Planificar Rotación: Considere rotar los neumáticos para promover un desgaste uniforme en el próximo mantenimiento.');
-        }
-
-        recommendations.add('- Verificación de Presión: Es crucial revisar y ajustar la presión de todos los neumáticos semanalmente según las especificaciones del fabricante.');
-
-        if (recommendations.size === 1 && !recommendations.has('- Planificar Rotación: Considere rotar los neumáticos para promover un desgaste uniforme en el próximo mantenimiento.')) { 
-            return ['- Todos los neumáticos se encuentran en buen estado. Continuar con las revisiones periódicas de presión.'];
-        }
-
-        return Array.from(recommendations);
-    }
-
-    window.generatePdf = async function(recordId) {
-        displayAppMessage('Generando PDF, por favor espera...', 'info');
-        
-        try {
-            const record = window.currentRecords.find(r => r.id === recordId);
-            if (!record) throw new Error('Registro no encontrado.');
-
-            const { jsPDF } = window.jspdf;
-            const doc = new jsPDF();
-
-            try {
-                if (logoBase64) {
-                    doc.addImage(logoBase64, 'PNG', 15, 10, 50, 16);
-                }
-            } catch (e) {
-                console.error("Error al añadir el logo al PDF. Se generará sin logo.", e);
-            }
-
-            doc.setFontSize(22);
-            doc.setFont('helvetica', 'bold');
-            doc.text("Registro de Desgaste de Neumáticos", 195, 20, { align: 'right' });
-            doc.setLineWidth(0.5);
-            doc.line(15, 30, 195, 30);
-
-            let yPos = 40;
-            doc.setFontSize(12);
-            doc.setFont('helvetica', 'bold');
-            doc.text("Información General", 15, yPos);
-            yPos += 8;
-            doc.setFont('helvetica', 'normal');
-            doc.text(`N° Orden: ${record.orderNumber}`, 15, yPos);
-            doc.text(`Fecha: ${new Date(record.date).toLocaleDateString('es-CL', {timeZone: 'UTC'})}`, 105, yPos);
-            yPos += 7;
-            doc.text(`Sucursal: ${record.branchName}`, 15, yPos);
-            doc.text(`Kilometraje: ${record.mileage.toLocaleString('es-CL')} km`, 105, yPos);
-            yPos += 7;
-            doc.text(`Tipo de Vehículo: ${record.vehicleType}`, 15, yPos);
-            yPos += 7;
-            doc.text(`Marca/Modelo General: ${record.generalMakeModel}`, 15, yPos);
-            yPos += 7;
-            doc.text(`Medida General: ${record.tireSize}`, 15, yPos);
-            yPos += 7;
-            if(record.generalComments) {
-                const splitComments = doc.splitTextToSize(`Comentarios: ${record.generalComments}`, 180);
-                doc.text(splitComments, 15, yPos);
-                yPos += (splitComments.length * 5);
-            }
-
-            const tireData = record.tires.map(t => [t.position, t.makeModel, t.surco1.toFixed(1), t.surco2.toFixed(1), t.surco3.toFixed(1)]);
-            doc.autoTable({
-                startY: yPos + 5,
-                head: [['Posición', 'Marca/Modelo', 'Surco 1 (mm)', 'Surco 2 (mm)', 'Surco 3 (mm)']],
-                body: tireData,
-                theme: 'grid',
-                headStyles: { fillColor: [5, 150, 105] },
-                didParseCell: function (data) {
-                    if (data.column.index >= 2 && data.column.index <= 4) {
-                        let value = parseFloat(data.cell.raw);
-                        if (!isNaN(value) && value < 3.0) {
-                            data.cell.styles.fillColor = '#FFDDE0';
-                            data.cell.styles.textColor = '#900C3F';
-                            data.cell.styles.fontStyle = 'bold';
-                        }
-                    }
-                }
-            });
-
-            yPos = doc.lastAutoTable.finalY + 10;
-            
-            doc.setFontSize(14);
-            doc.setFont('helvetica', 'bold');
-            doc.text("Recomendaciones", 15, yPos);
-            yPos += 8;
-
-            const recommendations = generateRecommendations(record);
-            doc.setFontSize(10);
-            doc.setFont('helvetica', 'normal');
-            doc.setTextColor(40);
-            recommendations.forEach(rec => {
-                if (yPos > 270) { 
-                    doc.addPage();
-                    yPos = 20;
-                }
-                const splitText = doc.splitTextToSize(rec, 180);
-                doc.text(splitText, 15, yPos);
-                yPos += (splitText.length * 5) + 2; 
-            });
-            doc.setTextColor(0);
-
-
-            const imageTires = record.tires.filter(t => t.photoURL && t.photoURL !== 'N/A');
-            if (imageTires.length > 0) {
-                 if (yPos > 180) { 
-                    doc.addPage();
-                    yPos = 20;
-                }
-                doc.setFontSize(14);
-                doc.setFont('helvetica', 'bold');
-                doc.text("Fotografías Adjuntas", 15, yPos);
-                yPos += 10;
-                
-                const imagePromises = imageTires.map(async (tire) => {
-                    try {
-                        if (tire.photoURL.startsWith('data:')) {
-                            return { tire, imageBase64: tire.photoURL, status: 'fulfilled' };
-                        }
-                        const response = await fetch(tire.photoURL);
-                        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-                        const blob = await response.blob();
-                        const imageBase64 = await new Promise((resolve, reject) => {
-                            const reader = new FileReader();
-                            reader.onloadend = () => resolve(reader.result);
-                            reader.onerror = reject;
-                            reader.readAsDataURL(blob);
-                        });
-                        return { tire, imageBase64, status: 'fulfilled' };
-                    } catch (e) {
-                        console.error(`No se pudo cargar la imagen para ${tire.position}:`, e);
-                        return { tire, status: 'rejected' };
-                    }
-                });
-
-                const imageResults = await Promise.all(imagePromises);
-
-                for (const result of imageResults) {
-                     if (yPos > 220) { 
-                        doc.addPage();
-                        yPos = 20;
-                    }
-                    doc.setFontSize(10);
-                    doc.setFont('helvetica', 'normal');
-                    if(result.status === 'fulfilled') {
-                        doc.text(`Posición: ${result.tire.position} (${result.tire.makeModel})`, 15, yPos);
-                        doc.addImage(result.imageBase64, 'JPEG', 15, yPos + 3, 80, 60);
-                        yPos += 70;
-                    } else {
-                        doc.text(`- Imagen no disponible para la posición ${result.tire.position}.`, 15, yPos);
-                        yPos += 7;
-                    }
-                }
-            }
-            
-            doc.output('dataurlnewwindow');
-            
+@@ -538,51 +1212,51 @@
             displayAppMessage('✅ PDF generado con éxito.', 'success');
 
         } catch (error) {
@@ -1006,120 +924,7 @@
             const minSurco = (record.tires || []).reduce((min, t) => Math.min(min, t.surco1, t.surco2, t.surco3), 99);
             const kpmm = record.kpmm !== null ? `${record.kpmm.toLocaleString('es-CL')}` : 'N/A';
             return [
-                record.orderNumber,
-                record.vehicleType,
-                record.branchName,
-                new Date(record.date).toLocaleDateString('es-CL', { timeZone: 'UTC' }),
-                `${minSurco.toFixed(1)} mm`,
-                kpmm
-            ];
-        });
-
-        doc.autoTable({
-            startY: 40,
-            head: [['N° Orden (Vehículo)', 'Tipo', 'Sucursal', 'Última Revisión', 'Surco Mínimo', 'Rendimiento (km/mm)']],
-            body: tableBody,
-            theme: 'grid',
-            headStyles: { fillColor: [5, 150, 105] },
-             didParseCell: function (data) {
-                const record = latestRecords[data.row.index];
-                if (!record) return;
-
-                if (data.column.index === 4) {
-                    let value = parseFloat(data.cell.raw);
-                    if (!isNaN(value) && value < 3.0) {
-                        data.cell.styles.fillColor = '#FFDDE0';
-                        data.cell.styles.textColor = '#900C3F';
-                        data.cell.styles.fontStyle = 'bold';
-                    }
-                }
-                if (data.column.index === 5) {
-                    const kpmm = record.kpmm;
-                    if (kpmm !== null) {
-                        const avg = categoryAverages[record.vehicleType];
-                        if (avg) {
-                            if (kpmm > avg * 1.15) { data.cell.styles.fillColor = '#D4EDDA'; data.cell.styles.textColor = '#155724'; } 
-                            else if (kpmm < avg * 0.85) { data.cell.styles.fillColor = '#F8D7DA'; data.cell.styles.textColor = '#721C24'; }
-                            else { data.cell.styles.fillColor = '#FFF3CD'; data.cell.styles.textColor = '#856404'; }
-                        }
-                    }
-                }
-            }
-        });
-
-        doc.output('dataurlnewwindow');
-        displayAppMessage('✅ Informe General generado.', 'success');
-    }
-    
-    // === HELPERS Y UI ===
-    function calculateKpi(records) {
-        const recordsWithKpi = [];
-        const vehicleGroups = records.reduce((acc, record) => {
-            const key = record.orderNumber;
-            if (!acc[key]) acc[key] = [];
-            acc[key].push(record);
-            return acc;
-        }, {});
-
-        for (const orderNumber in vehicleGroups) {
-            const group = vehicleGroups[orderNumber].sort((a, b) => a.mileage - b.mileage);
-
-            for (let i = 0; i < group.length; i++) {
-                const currentRecord = { ...group[i] };
-                if (i > 0) {
-                    const prevRecord = group[i - 1];
-                    const kmDiff = currentRecord.mileage - prevRecord.mileage;
-
-                    const getAvgMinTread = (r) => {
-                        if (!r.tires || r.tires.length === 0) return 0;
-                        const minTreads = r.tires.map(t => Math.min(t.surco1, t.surco2, t.surco3));
-                        return minTreads.reduce((sum, val) => sum + val, 0) / minTreads.length;
-                    };
-
-                    const prevAvgTread = getAvgMinTread(prevRecord);
-                    const currentAvgTread = getAvgMinTread(currentRecord);
-                    const wearDiff = prevAvgTread - currentAvgTread;
-
-                    if (kmDiff > 0 && wearDiff > 0) {
-                        currentRecord.kpmm = Math.round(kmDiff / wearDiff);
-                    } else {
-                        currentRecord.kpmm = null;
-                    }
-                } else {
-                    currentRecord.kpmm = null;
-                }
-                recordsWithKpi.push(currentRecord);
-            }
-        }
-        
-        const categoryKpis = recordsWithKpi.reduce((acc, record) => {
-            if (record.kpmm !== null && record.vehicleType) {
-                if (!acc[record.vehicleType]) acc[record.vehicleType] = [];
-                acc[record.vehicleType].push(record.kpmm);
-            }
-            return acc;
-        }, {});
-
-        const categoryAverages = {};
-        for (const type in categoryKpis) {
-            const kpis = categoryKpis[type];
-            categoryAverages[type] = kpis.reduce((sum, val) => sum + val, 0) / kpis.length;
-        }
-
-        return { recordsWithKpi: recordsWithKpi.sort((a,b) => new Date(b.date) - new Date(a.date)), categoryAverages };
-    }
-
-    function setUiState(state, message = '') {
-      const errorEl = document.getElementById('firebaseErrorDisplay');
-      const idEl = document.getElementById('userIdDisplay');
-      const formButtons = ['reviewButton', 'saveButton'];
-      
-      errorEl.textContent = '';
-      idEl.textContent = '';
-      let disableButtons = true;
-
-      switch(state) {
-        case 'loading':
+@@ -703,148 +1377,181 @@
           idEl.textContent = 'Conectando...';
           break;
         case 'authenticated':
@@ -1301,473 +1106,7 @@
             const maxSurco = Math.max(s1, s2, s3);
             const diff = maxSurco - minSurco;
 
-            data.tires.push({ position, makeModel, surco1: s1, surco2: s2, surco3: s3 });
-            if (photoFile) data.photoFiles.push({ file: photoFile, position });
-
-            if (minSurco < 3.0) reviewMessages.push({type: 'alert', text: `⚠️ ${position} (${makeModel}) min ${minSurco.toFixed(1)} mm → <strong>REEMPLAZO OBLIGATORIO</strong>.`});
-            else if (minSurco < 5.0) reviewMessages.push({type: 'warning', text: `🟠 ${position} (${makeModel}) min ${minSurco.toFixed(1)} mm → Monitorear, próximo a reemplazo.`});
-            if (diff > 2.0) reviewMessages.push({type: 'alert', text: `🚨 Desgaste irregular en ${position}. Δ ${diff.toFixed(1)} mm → Revisar <strong>alineación y presión</strong>.`});
-        });
-
-        if (dataError) {
-            displayReview(reviewMessages);
-            finishReview(reviewBtn);
-            return;
-        }
-
-        if (reviewMessages.length === 0) {
-            reviewMessages.push({type: 'success', text: '✅ Todos los neumáticos en buen estado. Listo para guardar.'});
-        }
-        
-        window.pendingReviewData = data;
-        saveBtn.disabled = false;
-        displayReview(reviewMessages);
-        finishReview(reviewBtn);
-        displayAppMessage('Revisión completa. Presiona "Guardar Registro".', 'success');
-    }
-
-    function finishReview(btn) {
-      if (authReady) btn.disabled = !document.getElementById('vehicleType')?.value;
-      btn.innerHTML = 'Evaluar Medición';
-    }
-    
-    function displayReview(messages) {
-      const container = document.getElementById('reviewFeedback');
-      const typeClasses = {
-        alert: 'bg-red-100 text-red-800 border-red-400',
-        warning: 'bg-yellow-100 text-yellow-800 border-yellow-400',
-        success: 'bg-green-100 text-green-800 border-green-400 font-bold',
-        error: 'bg-gray-200 text-gray-800 border-red-500 font-bold',
-      };
-      container.innerHTML = messages.map(m => `
-        <div class="p-3 rounded-lg text-sm mb-2 shadow-sm border-l-4 ${typeClasses[m.type] || 'bg-blue-100 text-blue-800 border-blue-400'}">
-          ${m.text}
-        </div>`).join('');
-    }
-
-    function getPositionDescription(pos) {
-      const descriptions = {
-        'P1': 'Eje 1 - Delantera Izquierda (Conductor)', 'P2': 'Eje 1 - Delantera Derecha',
-        'P3': 'Eje 2 - Trasera Izquierda', 'P6': 'Eje 2 - Trasera Derecha',
-        'P4': 'Eje 2 (Interior) - Izquierda (Doble Rodado)', 'P5': 'Eje 2 (Interior) - Derecha (Doble Rodado)',
-        'Repuesto': 'Rueda de Repuesto'
-      };
-      return descriptions[pos] || pos;
-    }
-
-    function getLoaderSvg(label) {
-      return `<svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white inline" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> ${label}`;
-    }
-
-    function displayAppMessage(message, type = 'info') {
-      const container = document.getElementById('appMessage');
-      const typeClasses = {
-        success: 'bg-green-500 text-white',
-        error: 'bg-red-500 text-white',
-        info: 'bg-blue-500 text-white'
-      };
-      container.className = `p-3 rounded-lg text-sm mb-4 font-medium shadow-md transition-all duration-300 ${typeClasses[type]}`;
-      container.textContent = message;
-      container.classList.remove('opacity-0', 'hidden', 'max-h-0', 'py-0', 'mb-0');
-      container.style.maxHeight = '100px';
-
-      setTimeout(() => {
-        container.classList.add('opacity-0');
-        container.style.maxHeight = '0px';
-        setTimeout(() => container.classList.add('hidden'), 300);
-      }, 5000);
-    }
-
-    function updateRandomRecommendation() {
-      const tip = longevityTips[Math.floor(Math.random() * longevityTips.length)];
-      document.getElementById('randomTip').innerHTML = tip;
-    }
-
-    function coerceRecordDate(value) {
-      if (!value) return null;
-      if (value instanceof Date) {
-        return Number.isNaN(value.getTime()) ? null : value;
-      }
-      if (typeof value === 'object') {
-        if (typeof value.toDate === 'function') {
-          const date = value.toDate();
-          return Number.isNaN(date.getTime()) ? null : date;
-        }
-        if (typeof value.seconds === 'number') {
-          const date = new Date(value.seconds * 1000);
-          return Number.isNaN(date.getTime()) ? null : date;
-        }
-      }
-      const date = new Date(value);
-      return Number.isNaN(date.getTime()) ? null : date;
-    }
-
-    function getRecordDateIso(record) {
-      const date = coerceRecordDate(record?.date);
-      if (!date) return '';
-      return date.toISOString().slice(0, 10);
-    }
-
-    function getRecordDateDisplay(record) {
-      const date = coerceRecordDate(record?.date);
-      if (!date) return '-';
-      try {
-        return date.toLocaleDateString('es-CL', { timeZone: 'UTC' });
-      } catch (error) {
-        console.warn('No se pudo formatear la fecha con la configuración regional. Se utilizará ISO.', error);
-        return date.toISOString().slice(0, 10);
-      }
-    }
-
-    function getRecordMinSurco(record) {
-      return (record?.tires || []).reduce((min, tire) => {
-        const values = [tire.surco1, tire.surco2, tire.surco3]
-          .map(value => parseFloat(value))
-          .filter(value => Number.isFinite(value));
-        if (!values.length) return min;
-        const localMin = Math.min(...values);
-        return Math.min(min, localMin);
-      }, Infinity);
-    }
-
-    function getRecordMileage(record) {
-      const raw = record?.mileage;
-      if (typeof raw === 'number') {
-        return Number.isFinite(raw) ? raw : null;
-      }
-      if (typeof raw === 'string') {
-        const cleaned = raw.replace(/[^\d]/g, '');
-        if (!cleaned) return null;
-        const parsed = parseInt(cleaned, 10);
-        return Number.isNaN(parsed) ? null : parsed;
-      }
-      return null;
-    }
-
-    function collectHistoryFilters() {
-      const branchFilter = document.getElementById('branchFilter');
-      const branchColumnFilter = document.getElementById('branchColumnFilter');
-      const orderFilter = document.getElementById('orderFilter');
-      const vehicleFilter = document.getElementById('vehicleFilter');
-      const kmFilter = document.getElementById('kmFilter');
-      const dateFilter = document.getElementById('dateFilter');
-      const surcoFilter = document.getElementById('surcoFilter');
-      const kpmmFilter = document.getElementById('kpmmFilter');
-
-      return {
-        branch: branchFilter ? branchFilter.value : 'all',
-        branchColumn: branchColumnFilter ? branchColumnFilter.value : '',
-        order: orderFilter ? orderFilter.value.trim().toLowerCase() : '',
-        vehicle: vehicleFilter ? vehicleFilter.value.trim().toLowerCase() : '',
-        km: kmFilter ? kmFilter.value.trim() : '',
-        date: dateFilter ? dateFilter.value : '',
-        surco: surcoFilter ? surcoFilter.value.trim() : '',
-        kpmm: kpmmFilter ? kpmmFilter.value.trim() : ''
-      };
-    }
-
-    function filterRecordsByValues(records, filters) {
-      const normalizedBranch = (filters.branch || '').toLowerCase();
-      const normalizedBranchColumn = (filters.branchColumn || '').toLowerCase();
-      const normalizedKmDigits = filters.km.replace(/[^0-9]/g, '');
-      const normalizedKmText = filters.km.toLowerCase();
-      const normalizedSurco = filters.surco.replace(',', '.').trim();
-      const normalizedKpmm = filters.kpmm.replace(',', '.').trim();
-
-      return records.filter(record => {
-        const orderStr = `${record.orderNumber ?? ''}`.toLowerCase();
-        if (filters.order && !orderStr.includes(filters.order)) {
-          return false;
-        }
-
-        const branchName = (record.branchName || '').toLowerCase();
-        if (filters.branch && filters.branch !== 'all' && branchName !== normalizedBranch) {
-          return false;
-        }
-
-        if (filters.branchColumn && !branchName.includes(normalizedBranchColumn)) {
-          return false;
-        }
-
-        const vehicleStr = (record.vehicleType || '').toLowerCase();
-        if (filters.vehicle && !vehicleStr.includes(filters.vehicle)) {
-          return false;
-        }
-
-        if (filters.km) {
-          const mileage = getRecordMileage(record);
-          if (normalizedKmDigits) {
-            const mileageDigits = mileage !== null ? mileage.toString() : '';
-            if (!mileageDigits.includes(normalizedKmDigits)) {
-              return false;
-            }
-          } else {
-            const rawMileage = (record.mileage ?? '').toString().toLowerCase();
-            if (!rawMileage.includes(normalizedKmText)) {
-              return false;
-            }
-          }
-        }
-
-        const recordDateIso = getRecordDateIso(record);
-        if (filters.date && recordDateIso !== filters.date) {
-          return false;
-        }
-
-        if (filters.surco) {
-          const minSurco = getRecordMinSurco(record);
-          const surcoText = Number.isFinite(minSurco) ? minSurco.toFixed(1) : '';
-          if (!surcoText.includes(normalizedSurco)) {
-            return false;
-          }
-        }
-
-        if (filters.kpmm) {
-          const kpmm = typeof record.kpmm === 'number' && Number.isFinite(record.kpmm) ? record.kpmm.toString() : '';
-          if (!kpmm.includes(normalizedKpmm)) {
-            return false;
-          }
-        }
-
-        return true;
-      });
-    }
-
-    function getFilteredDataForHistory() {
-      const { recordsWithKpi, categoryAverages } = calculateKpi(window.currentRecords);
-      const filters = collectHistoryFilters();
-      const filteredRecords = filterRecordsByValues(recordsWithKpi, filters);
-      return { filteredRecords, categoryAverages };
-    }
-
-    window.applyFiltersAndDisplay = function() {
-      const { filteredRecords, categoryAverages } = getFilteredDataForHistory();
-      displayRecords(filteredRecords, categoryAverages);
-    }
-
-    function displayRecords(records, categoryAverages) {
-      const container = document.getElementById('recordsTableBody');
-      if (!container) return;
-      if (!records.length) {
-        container.innerHTML = '<tr><td colspan="8" class="text-center py-8 text-gray-500">No hay registros para este filtro.</td></tr>';
-        return;
-      }
-      container.innerHTML = records.map(record => {
-        const dateStr = getRecordDateDisplay(record);
-        const minSurco = getRecordMinSurco(record);
-        const hasSurcoData = Number.isFinite(minSurco);
-        let criticalClass = 'text-gray-500';
-        if (hasSurcoData) {
-          if (minSurco < 3.0) {
-            criticalClass = 'bg-red-100 text-red-800 font-bold';
-          } else if (minSurco < 5.0) {
-            criticalClass = 'bg-yellow-100 text-yellow-800';
-          } else {
-            criticalClass = 'text-gray-700';
-          }
-        }
-
-        const mileage = getRecordMileage(record);
-        const mileageDisplay = mileage !== null ? `${mileage.toLocaleString('es-CL')} km` : '-';
-
-        const kpmm = typeof record.kpmm === 'number' && Number.isFinite(record.kpmm) ? record.kpmm : null;
-        let kpmmCell = `<td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500" title="Se necesitan al menos dos registros para calcular el rendimiento">N/A</td>`;
-
-        if (kpmm !== null && categoryAverages) {
-          const avg = categoryAverages[record.vehicleType];
-          let colorClass = 'bg-gray-100';
-          if (typeof avg === 'number' && Number.isFinite(avg)) {
-            if (kpmm > avg * 1.15) {
-              colorClass = 'bg-green-100 text-green-800';
-            } else if (kpmm < avg * 0.85) {
-              colorClass = 'bg-red-100 text-red-800';
-            } else {
-              colorClass = 'bg-yellow-100 text-yellow-800';
-            }
-          }
-          kpmmCell = `<td class="px-4 py-3 whitespace-nowrap text-sm font-semibold ${colorClass}">${kpmm.toLocaleString('es-CL')}</td>`;
-        }
-
-        return `
-          <tr class="border-b hover:bg-gray-50 transition">
-            <td class="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">${record.orderNumber}</td>
-            <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-600 font-semibold">${record.branchName || 'N/A'}</td>
-            <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${record.vehicleType}</td>
-            <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${mileageDisplay}</td>
-            <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${dateStr}</td>
-            <td class="px-4 py-3 whitespace-nowrap text-sm ${criticalClass}">${hasSurcoData ? `${minSurco.toFixed(1)} mm` : '-'}</td>
-            ${kpmmCell}
-            <td class="px-4 py-3 whitespace-nowrap text-right text-sm font-medium">
-              <div class="flex items-center justify-end gap-2">
-                <button onclick="window.generatePdf('${record.id}')" class="text-red-600 hover:text-red-800 p-2 rounded-lg transition hover:bg-red-100" title="Generar PDF">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
-                    <path d="M14 14V4.5L9.5 0H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2zM9.5 1.5L14 6v8.5a.5.5 0 0 1-.5.5H4a.5.5 0 0 1-.5-.5v-12A.5.5 0 0 1 4 1.5h5.5z"/>
-                    <path d="M4.603 12.087a.81.81 0 0 1-.438.448l-.175.082a.558.558 0 0 1-.685-.28.52.52 0 0 1 .035-.634l.116-.117.175-.082a.81.81 0 0 1 .438-.448l.175-.082.685.28a.52.52 0 0 1-.035.634l-.116.117-.175.082zm1.833-1.422a.512.512 0 0 1-.028.682l-.206.206a.512.512 0 0 1-.682.028l-.206-.206a.512.512 0 0 1 .028-.682l.206-.206a.512.512 0 0 1 .682-.028l.206.206zm.208.64a.512.512 0 0 1-.028.682l-.206.206a.512.512 0 0 1-.682.028l-.206-.206a.512.512 0 0 1 .028-.682l.206-.206a.512.512 0 0 1 .682-.028l.206.206zm1.758-1.55a.512.512 0 0 1 .686.252l.206.411a.512.512 0 0 1-.252.686l-.411.206a.512.512 0 0 1-.686-.252l-.206-.411a.512.512 0 0 1 .252-.686l.411.206zm.686.645a.512.512 0 0 1 .252.686l-.206.411a.512.512 0 0 1-.686.252l-.411-.206a.512.512 0 0 1-.252-.686l.206-.411a.512.512 0 0 1 .686-.252l.411.206zM8.579 14.3a.512.512 0 0 1 .252.686l-.206.411a.512.512 0 0 1-.686.252l-.411-.206a.512.512 0 0 1-.252-.686l.206-.411a.512.512 0 0 1 .686-.252l.411.206zm2.814-2.97a.512.512 0 0 1 .686.252l.206.411a.512.512 0 0 1-.252.686l-.411.206a.512.512 0 0 1-.686-.252l-.206-.411a.512.512 0 0 1 .252-.686l.411.206zm.686.645a.512.512 0 0 1 .252.686l-.206.411a.512.512 0 0 1-.686.252l-.411-.206a.512.512 0 0 1-.252-.686l.206-.411a.512.512 0 0 1 .686-.252l.411.206zM11.803 14.3a.512.512 0 0 1 .252.686l-.206.411a.512.512 0 0 1-.686.252l-.411-.206a.512.512 0 0 1-.252-.686l.206-.411a.512.512 0 0 1 .686-.252l.411.206z"/>
-                  </svg>
-                </button>
-                <button onclick="window.analyzeRecord('${record.id}')" class="text-primary hover:text-secondary p-2 rounded-lg transition hover:bg-primary/10 flex items-center gap-2">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3c7.2 0 9 1.8 9 9s-1.8 9-9 9-9-1.8-9-9 1.8-9 9-9"/><path d="M12 15h.01"/><path d="M12 12V9"/></svg>
-                  Analizar
-                </button>
-              </div>
-            </td>
-          </tr>`;
-      }).join('');
-    }
-
-    function formatRecordForPrompt(record) {
-      let detail = `Sucursal: ${record.branchName || "N/A"}\n`;
-      detail += `Tipo Vehículo: ${record.vehicleType}\n`;
-      detail += `Medida General: ${record.tireSize || 'N/A'}\n`;
-      detail += `Marca/Modelo General: ${record.generalMakeModel}\n`;
-      detail += `Comentarios: "${record.generalComments || 'Ninguno'}"\n\n`;
-      detail += "Estado de Neumáticos:\n";
-      (record.tires || []).forEach(t => {
-        const minSurco = Math.min(t.surco1, t.surco2, t.surco3);
-        const maxSurco = Math.max(t.surco1, t.surco2, t.surco3);
-        const diff = maxSurco - minSurco;
-        detail += `- ${t.position} (${t.makeModel}): ${t.surco1}/${t.surco2}/${t.surco3} mm. Mín: ${minSurco.toFixed(1)}. Δ: ${diff.toFixed(1)} mm.\n`;
-      });
-      detail += "\nLímite legal flota: 3.0 mm.";
-      return detail;
-    }
-
-    function exportFilteredData(format) {
-      const { filteredRecords } = getFilteredDataForHistory();
-
-      if (!filteredRecords.length) {
-        displayAppMessage('No hay datos para exportar con los filtros aplicados.', 'error');
-        return;
-      }
-
-      switch (format) {
-        case 'pdf':
-          exportFilteredToPdf(filteredRecords);
-          break;
-        case 'excel':
-          exportFilteredToExcel(filteredRecords);
-          break;
-        case 'csv':
-          exportFilteredToCsv(filteredRecords);
-          break;
-        default:
-          console.warn('Formato de exportación no soportado:', format);
-      }
-    }
-
-    function exportFilteredToPdf(records) {
-      try {
-        const { jsPDF } = window.jspdf;
-        const doc = new jsPDF();
-        const generatedAt = new Date();
-        doc.setFontSize(14);
-        doc.setFont('helvetica', 'bold');
-        doc.text('Historial de Registros', 14, 16);
-        doc.setFontSize(10);
-        doc.setFont('helvetica', 'normal');
-        doc.text(`Generado: ${generatedAt.toLocaleDateString('es-CL')}`, 14, 22);
-
-        const tableRows = records.map(record => {
-          const mileage = getRecordMileage(record);
-          const minSurco = getRecordMinSurco(record);
-          const kpmm = typeof record.kpmm === 'number' && Number.isFinite(record.kpmm) ? record.kpmm : null;
-
-          return [
-            record.orderNumber || '',
-            record.branchName || 'N/A',
-            record.vehicleType || 'N/A',
-            mileage !== null ? mileage.toLocaleString('es-CL') : '-',
-            getRecordDateDisplay(record),
-            Number.isFinite(minSurco) ? minSurco.toFixed(1) : '-',
-            kpmm !== null ? kpmm.toLocaleString('es-CL') : 'N/A'
-          ];
-        });
-
-        doc.autoTable({
-          startY: 28,
-          head: [['Orden', 'Sucursal', 'Vehículo', 'KM', 'Fecha', 'Surco Mín. (mm)', 'Rendimiento (km/mm)']],
-          body: tableRows,
-          styles: { fontSize: 8 },
-          headStyles: { fillColor: [5, 150, 105], textColor: 255 },
-          alternateRowStyles: { fillColor: [245, 245, 245] },
-          margin: { left: 14, right: 14 }
-        });
-
-        doc.save(`historial_neumaticos_${generatedAt.toISOString().slice(0, 10)}.pdf`);
-        displayAppMessage('Exportación a PDF completada.', 'success');
-      } catch (error) {
-        console.error('Error al exportar a PDF:', error);
-        displayAppMessage('No se pudo exportar a PDF.', 'error');
-      }
-    }
-
-    function exportFilteredToExcel(records) {
-      try {
-        const rows = records.map(record => {
-          const mileage = getRecordMileage(record);
-          const minSurco = getRecordMinSurco(record);
-          const kpmm = typeof record.kpmm === 'number' && Number.isFinite(record.kpmm) ? Number(record.kpmm.toFixed(2)) : '';
-
-          return {
-            'Orden': record.orderNumber || '',
-            'Sucursal': record.branchName || 'N/A',
-            'Vehículo': record.vehicleType || 'N/A',
-            'KM': mileage !== null ? mileage : '',
-            'Fecha': getRecordDateIso(record),
-            'Surco Mín (mm)': Number.isFinite(minSurco) ? Number(minSurco.toFixed(1)) : '',
-            'Rendimiento (km/mm)': kpmm
-          };
-        });
-
-        const worksheet = XLSX.utils.json_to_sheet(rows);
-        const workbook = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(workbook, worksheet, 'Historial');
-        XLSX.writeFile(workbook, `historial_neumaticos_${new Date().toISOString().slice(0, 10)}.xlsx`);
-        displayAppMessage('Exportación a Excel completada.', 'success');
-      } catch (error) {
-        console.error('Error al exportar a Excel:', error);
-        displayAppMessage('No se pudo exportar a Excel.', 'error');
-      }
-    }
-
-    function exportFilteredToCsv(records) {
-      try {
-        let csvContent = 'data:text/csv;charset=utf-8,';
-        const superset = Array.from(new Set(Object.values(TIRES_STRUCTURE).flat()));
-        const headers = [
-          'Orden', 'Sucursal', 'Kilometraje', 'Fecha', 'Tipo Vehículo', 'Marca General', 'Medida', 'Comentarios', 'ID Técnico', 'Rendimiento (km/mm)',
-          ...superset.flatMap(pos => [`Modelo_${pos}`, `Surco1_${pos}`, `Surco2_${pos}`, `Surco3_${pos}`, `FotoURL_${pos}`])
-        ];
-        csvContent += headers.join(';') + '\r\n';
-
-        records.forEach(record => {
-          const tireMap = (record.tires || []).reduce((acc, tire) => ({ ...acc, [tire.position]: tire }), {});
-          const mileage = getRecordMileage(record);
-          const minifiedComments = (record.generalComments || '').replace(/"/g, '""');
-          const kpmm = typeof record.kpmm === 'number' && Number.isFinite(record.kpmm) ? record.kpmm : '';
-
-          const row = [
-            record.orderNumber || '',
-            record.branchName || 'N/A',
-            mileage !== null ? mileage : '',
-            getRecordDateIso(record),
-            record.vehicleType || '',
-            record.generalMakeModel || '',
-            record.tireSize || '',
-            `"${minifiedComments}"`,
-            record.technicianId || '',
-            kpmm,
-            ...superset.flatMap(pos => {
-              const tire = tireMap[pos];
-              if (!tire) {
-                return ['', '', '', '', ''];
-              }
-              const surco1 = tire.surco1 ?? '';
-              const surco2 = tire.surco2 ?? '';
-              const surco3 = tire.surco3 ?? '';
-              const photo = tire.photoURL && tire.photoURL !== 'N/A' ? tire.photoURL : '';
-              return [tire.makeModel || '', surco1, surco2, surco3, photo];
-            })
+@@ -1318,57 +2025,70 @@
           ];
 
           csvContent += row.join(';') + '\r\n';
@@ -1797,7 +1136,14 @@
       renderCatalogLists();
       attachOrderNumberHandlers();
       setOrderInputState('loading');
-      loadFleetDataset();
+      ensureOneDriveAccessToken()
+        .catch((error) => {
+          console.warn('No se pudo iniciar sesión automáticamente en OneDrive:', error);
+          clearOneDriveSession();
+        })
+        .finally(() => {
+          loadFleetDataset();
+        });
 
       initializeAppCore().then(() => {
         const branchSelect = document.getElementById('branchName');
@@ -1831,19 +1177,7 @@
               toggleMenu(false);
             }
           });
-
-          exportMenu.querySelectorAll('button[data-export]').forEach(button => {
-            button.addEventListener('click', (event) => {
-              event.stopPropagation();
-              toggleMenu(false);
-              exportFilteredData(button.dataset.export);
-            });
-          });
-        }
-
-        window.switchTab('guide');
-      });
-    }
+@@ -1388,90 +2108,98 @@
   </script>
 </head>
 
@@ -1942,10 +1276,7 @@
           </div>
 
           <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-200 mb-6">
-            <h3 class="text-xl font-bold text-gray-800 mb-4">2. Selección y Medición</h3>
-             <div>
-                <label for="vehicleType" class="block text-sm font-medium text-gray-700 mb-1">Tipo de Vehículo</label>
-                <select id="vehicleType" name="vehicleType" class="form-control" onchange="generateTireInputs()" required>
+@@ -1482,50 +2210,81 @@
                   <option value="" disabled selected>Selecciona un tipo para generar los campos...</option>
                   <option value="Bus">Bus</option>
                   <option value="Taxibus">Taxibus</option>
@@ -2027,69 +1358,3 @@
                     <div id="exportMenu" class="absolute right-0 mt-2 w-44 bg-white border border-gray-200 rounded-lg shadow-lg py-1 hidden z-10">
                         <button type="button" data-export="pdf" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2">
                             <span class="inline-flex w-2 h-2 rounded-full bg-red-500"></span>
-                            PDF
-                        </button>
-                        <button type="button" data-export="excel" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2">
-                            <span class="inline-flex w-2 h-2 rounded-full bg-green-500"></span>
-                            Excel
-                        </button>
-                        <button type="button" data-export="csv" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2">
-                            <span class="inline-flex w-2 h-2 rounded-full bg-amber-500"></span>
-                            CSV
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </div>
-        <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-x-auto">
-            <table class="w-full text-left">
-                <thead class="bg-gray-50 border-b">
-                    <tr>
-                        <th class="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">Orden</th>
-                        <th class="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">Sucursal</th>
-                        <th class="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">Vehículo</th>
-                        <th class="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">KM</th>
-                        <th class="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">Fecha</th>
-                        <th class="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">Surco Mín.</th>
-                        <th class="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">Rendimiento (km/mm)</th>
-                        <th class="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider text-right">Acciones</th>
-                    </tr>
-                    <tr class="bg-white">
-                        <th class="px-4 py-2">
-                            <input id="orderFilter" type="text" placeholder="Buscar orden" class="filter-input bg-white" oninput="applyFiltersAndDisplay()" />
-                        </th>
-                        <th class="px-4 py-2">
-                            <select id="branchColumnFilter" class="filter-input bg-white" onchange="applyFiltersAndDisplay()">
-                                <option value="">Todas</option>
-                            </select>
-                        </th>
-                        <th class="px-4 py-2">
-                            <input id="vehicleFilter" type="text" placeholder="Buscar vehículo" class="filter-input bg-white" oninput="applyFiltersAndDisplay()" />
-                        </th>
-                        <th class="px-4 py-2">
-                            <input id="kmFilter" type="text" placeholder="Filtrar km" class="filter-input bg-white" oninput="applyFiltersAndDisplay()" />
-                        </th>
-                        <th class="px-4 py-2">
-                            <input id="dateFilter" type="date" class="filter-input bg-white" onchange="applyFiltersAndDisplay()" />
-                        </th>
-                        <th class="px-4 py-2">
-                            <input id="surcoFilter" type="text" placeholder="Mínimo mm" class="filter-input bg-white" oninput="applyFiltersAndDisplay()" />
-                        </th>
-                        <th class="px-4 py-2">
-                            <input id="kpmmFilter" type="text" placeholder="Filtrar kpmm" class="filter-input bg-white" oninput="applyFiltersAndDisplay()" />
-                        </th>
-                        <th class="px-4 py-2"></th>
-                    </tr>
-                </thead>
-                <tbody id="recordsTableBody">
-                    <!-- Filas se insertarán dinámicamente -->
-                </tbody>
-            </table>
-        </div>
-      </div>
-
-    </main>
-  </div>
-</body>
-</html>
-
