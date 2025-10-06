@@ -69,8 +69,7 @@
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
     import { getAuth, onAuthStateChanged, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-    import { getFirestore, addDoc, onSnapshot, collection, query, serverTimestamp, doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-    import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-storage.js";
+    import { getFirestore, addDoc, onSnapshot, collection, query, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
     // === CONFIGURACIÓN ===
     const GEMINI_MODEL = "gemini-2.5-flash-preview-05-20";
@@ -125,7 +124,7 @@
     ];
 
     // === ESTADO GLOBAL DE LA APLICACIÓN ===
-    let app = null, db = null, auth = null, storage = null;
+    let app = null, db = null, auth = null;
     let currentUserId = null;
     let authReady = false;
     let unsubscribeRecords = null;
@@ -1134,7 +1133,6 @@
         app = initializeApp(firebaseConfig);
         db = getFirestore(app);
         auth = getAuth(app);
-        storage = getStorage(app);
 
         onAuthStateChanged(auth, user => {
           if (user) {
