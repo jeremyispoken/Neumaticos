@@ -2054,31 +2054,937 @@
                         <th class="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">Rendimiento (km/mm)</th>
                         <th class="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider text-right">Acciones</th>
                     </tr>
-                    <tr class="bg-white">
-                        <th class="px-4 py-2">
-                            <input id="orderFilter" type="text" placeholder="Buscar orden" class="filter-input bg-white" oninput="applyFiltersAndDisplay()" />
-                        </th>
-                        <th class="px-4 py-2">
-                            <select id="branchColumnFilter" class="filter-input bg-white" onchange="applyFiltersAndDisplay()">
-                                <option value="">Todas</option>
-                            </select>
-                        </th>
-                        <th class="px-4 py-2">
-                            <input id="vehicleFilter" type="text" placeholder="Buscar vehículo" class="filter-input bg-white" oninput="applyFiltersAndDisplay()" />
-                        </th>
-                        <th class="px-4 py-2">
-                            <input id="kmFilter" type="text" placeholder="Filtrar km" class="filter-input bg-white" oninput="applyFiltersAndDisplay()" />
-                        </th>
-                        <th class="px-4 py-2">
-                            <input id="dateFilter" type="date" class="filter-input bg-white" onchange="applyFiltersAndDisplay()" />
-                        </th>
-                        <th class="px-4 py-2">
-                            <input id="surcoFilter" type="text" placeholder="Mínimo mm" class="filter-input bg-white" oninput="applyFiltersAndDisplay()" />
-                        </th>
-                        <th class="px-4 py-2">
-                            <input id="kpmmFilter" type="text" placeholder="Filtrar kpmm" class="filter-input bg-white" oninput="applyFiltersAndDisplay()" />
-                        </th>
-                        <th class="px-4 py-2"></th>
+                </thead>
+                <tbody id="recordsTableBody">
+                    <!-- Filas se insertarán dinámicamente -->
+                </tbody>
+            </table>
+        </div>
+      </div>
+
+    </main>
+  </div>
+</body>
+</html>
+
+
+        extend: {
+          colors: {
+            primary: "#059669",
+            secondary: "#10b981",
+            accent: "#fbbf24",
+            background: "#f9fafb",
+          },
+          fontFamily: {
+            sans: ["Inter", "sans-serif"]
+          },
+        },
+      },
+    };
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    html, body { height: 100%; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
+    #app-container { min-height: 100vh; }
+    .tab-button { transition: all 0.2s; padding: 1rem 0.5rem; border-bottom: 4px solid transparent; }
+    .tab-button.active { border-bottom-color: #059669; font-weight: 600; color: #059669; }
+    .form-control { border-radius: 0.5rem; border: 1px solid #d1d5db; padding: 0.5rem 0.75rem; width: 100%; transition: all 0.15s; }
+    .form-control:focus { border-color: #059669; box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.2); outline: none; }
+  </style>
+
+  <!-- Librerías para generar PDF -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js"></script>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { getAuth, onAuthStateChanged, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+    import { getFirestore, addDoc, onSnapshot, collection, query, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+    import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-storage.js";
+
+    // === CONFIGURACIÓN ===
+    const GEMINI_MODEL = "gemini-2.5-flash-preview-05-20";
+    const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+    const apiKey = typeof __gemini_key !== 'undefined' ? __gemini_key : "";
+    const BRANCHES = ["Copiapó", "Vallenar", "Santiago", "Viña del Mar", "Casa Matriz"];
+    const TIRES_STRUCTURE = {
+      'Bus': ['P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'Repuesto'],
+      'Taxibus': ['P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'Repuesto'],
+      'Minibús': ['P1', 'P2', 'P3', 'P4', 'Repuesto'],
+      'Minibús DR (Doble Rodado)': ['P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'Repuesto'],
+      'Camioneta': ['P1', 'P2', 'P3', 'P4', 'Repuesto'],
+    };
+    const PREDEFINED_MODELS = [
+      'Michelin X Multiway 3D XZE', 'Pirelli FH:01 Energy', 'Bridgestone R260', 'Dunlop SP338', 'Goodyear KMAX S', 'Continental HT3', 'Hankook SmartFlex AH31', 'Westlake CB867', 'Sailun S701'
+    ];
+    const PREDEFINED_SIZES = ['225/75R16', '245/70R19.5', '275/80R22.5', '295/80R22.5', '315/80R22.5', '11R22.5', '12R22.5', '10.00R20'];
+    const longevityTips = [
+      "Mantén la <strong>presión correcta</strong> semanalmente. La subinflación es el principal asesino de neumáticos.",
+      "Realiza la <strong>rotación</strong> cada 10–12 mil km para asegurar un desgaste uniforme.",
+      "Alinea si notas desgaste irregular o tras golpes fuertes.",
+      "Balancea al montar o tras reparaciones para evitar vibraciones.",
+      "Inspecciona cortes, protuberancias y objetos incrustados.",
+      "Conduce suave: evita frenazos y acelerones.",
+      "Revisa suspensión/amortiguadores: influyen en el desgaste.",
+      "Limpia neumáticos y llantas con regularidad.",
+    ];
+
+    // === ESTADO GLOBAL DE LA APLICACIÓN ===
+    let app = null, db = null, auth = null, storage = null;
+    let currentUserId = null;
+    let authReady = false;
+    let unsubscribeRecords = null;
+    window.currentRecords = [];
+    window.pendingReviewData = null;
+
+    // --- TUS CREDENCIALES DE FIREBASE ---
+    const firebaseConfig = {
+        apiKey: "AIzaSyBtc4KcGwNr4y79YeI4EdUX9mBSfindhH0",
+        authDomain: "neumaticos-fv.firebaseapp.com",
+        projectId: "neumaticos-fv",
+        storageBucket: "neumaticos-fv.appspot.com",
+        messagingSenderId: "50061965881",
+        appId: "1:50061965881:web:31c43abfeabc0c0ed8ebe8",
+        measurementId: "G-LZVB5CT01W"  
+    };
+
+    const appId = 'flota-track-app';
+
+    // === INICIALIZACIÓN (CÓDIGO FUNCIONAL) ===
+    async function initializeAppCore() {
+      setUiState('loading');
+      
+      try {
+        app = initializeApp(firebaseConfig);
+        db = getFirestore(app);
+        storage = getStorage(app);
+        auth = getAuth(app);
+
+        onAuthStateChanged(auth, user => {
+          if (user) {
+            currentUserId = user.uid;
+            authReady = true;
+            setUiState('authenticated', `ID: ${currentUserId.substring(0, 8)}...`);
+            if (window.currentRecords.length === 0) {
+              loadRecords();
+            }
+          } else {
+            currentUserId = null;
+            authReady = false;
+            setUiState('unauthenticated');
+          }
+        });
+
+        await attemptInitialSignIn();
+
+      } catch (e) {
+        setUiState('error', 'Error crítico al iniciar Firebase.');
+        console.error("Error crítico de inicialización de Firebase:", e);
+      }
+    }
+
+    async function attemptInitialSignIn() {
+      try {
+        await signInAnonymously(auth);
+      } catch (error) {
+        console.error("Fallo el intento de inicio de sesión:", error.code, error.message);
+        let friendlyMessage = "Error de autenticación desconocido.";
+        switch (error.code) {
+          case 'auth/network-request-failed':
+            friendlyMessage = "Falla de red. Revisa tu conexión.";
+            break;
+          case 'auth/operation-not-allowed':
+            friendlyMessage = "Inicio de sesión anónimo no habilitado.";
+            break;
+        }
+        setUiState('error', friendlyMessage);
+      }
+    }
+    
+    // === GESTIÓN DE DATOS (FIRESTORE) ===
+    function loadRecords() {
+      if (!db || !authReady) return;
+      if (typeof unsubscribeRecords === 'function') {
+        unsubscribeRecords();
+      }
+      const recordsRef = collection(db, `/artifacts/${appId}/public/data/tire_records`);
+      const q = query(recordsRef);
+
+      unsubscribeRecords = onSnapshot(q, (snapshot) => {
+        const records = [];
+        snapshot.forEach((doc) => records.push({ id: doc.id, ...doc.data() }));
+        window.currentRecords = records.sort((a, b) => (b.orderNumber || 0) - (a.orderNumber || 0));
+        displayRecords(window.currentRecords);
+      }, (err) => console.error("Error en onSnapshot:", err));
+    }
+
+    async function uploadPhoto(file, position) {
+      if (!storage || !currentUserId) throw new Error("Storage o usuario no disponibles");
+      const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
+      const fileName = `${currentUserId}_${position}_${Date.now()}.${ext}`;
+      const storageRef = ref(storage, `tire_photos/${currentUserId}/${fileName}`);
+      await uploadBytes(storageRef, file);
+      return getDownloadURL(storageRef);
+    }
+    
+    // === LÓGICA DE LA APLICACIÓN ===
+    window.handleSave = async function() {
+      if (!authReady || !window.pendingReviewData) {
+        return displayAppMessage(authReady ? 'Evalúa antes de guardar' : 'Error de autenticación.', 'error');
+      }
+
+      const data = window.pendingReviewData;
+      const saveBtn = document.getElementById('saveButton');
+      saveBtn.disabled = true;
+      saveBtn.innerHTML = getLoaderSvg('Guardando...');
+
+      try {
+        const uploadedPhotos = await Promise.all((data.photoFiles || []).map(async item => ({
+          position: item.position,
+          url: await uploadPhoto(item.file, item.position)
+        })));
+        
+        data.tires = data.tires.map(tire => {
+          const foundPhoto = uploadedPhotos.find(p => p.position === tire.position);
+          return { ...tire, photoURL: foundPhoto ? foundPhoto.url : 'N/A' };
+        });
+
+        const { photoFiles, ...finalRecord } = { ...data, timestamp: serverTimestamp() };
+        const recordsRef = collection(db, `/artifacts/${appId}/public/data/tire_records`);
+        await addDoc(recordsRef, finalRecord);
+
+        displayAppMessage('✅ Registro guardado con éxito', 'success');
+        resetRegistrationForm();
+        window.switchTab('records');
+
+      } catch (e) {
+        console.error('Error al guardar:', e);
+        displayAppMessage(`❌ Error al guardar: ${e.message}`, 'error');
+      } finally {
+        saveBtn.disabled = true;
+        saveBtn.innerHTML = 'Guardar Registro';
+      }
+    }
+    
+    // === LÓGICA DE IA (GEMINI) ===
+    window.analyzeRecord = async function(recordId) {
+      if (!authReady) return displayAppMessage('Error: Base de datos no inicializada.', 'error');
+      
+      const record = window.currentRecords.find(r => r.id === recordId);
+      if (!record) return displayAppMessage('Registro no encontrado', 'error');
+      
+      displayAppMessage(`Iniciando análisis para Orden N° ${record.orderNumber}...`, 'info');
+
+      const recordDetails = formatRecordForPrompt(record);
+      const systemPrompt = "Actúa como ingeniero de mantenimiento de flotas y experto en neumáticos. Analiza el informe de surcos. Indica neumáticos críticos (<3mm) y sugiere un plan de acción conciso y priorizado (rotación, reemplazo, alineación, presión). Usa fuentes web si es útil y lista las citas.";
+      const userQuery = `Análisis de la Orden N° ${record.orderNumber} con ${record.mileage} km:\n\n${recordDetails}`;
+      if (!apiKey) {
+        console.error('No se ha configurado la clave de API de Gemini.');
+        return displayAppMessage('Configura la clave de Gemini antes de usar el análisis con IA.', 'error');
+      }
+
+      const payload = {
+        contents: [{ role: 'user', parts: [{ text: userQuery }] }],
+        systemInstruction: { role: 'system', parts: [{ text: systemPrompt }] },
+        tools: [{ google_search: {} }]
+      };
+
+      try {
+        const res = await fetch(`${GEMINI_API_URL}?key=${apiKey}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const result = await res.json();
+        if (!res.ok) {
+          const apiError = result?.error?.message;
+          throw new Error(apiError ? `Gemini API error: ${apiError}` : `Gemini API request failed with status ${res.status}`);
+        }
+        const candidate = result?.candidates?.[0];
+        const text = candidate?.content?.parts?.[0]?.text || 'No se pudo generar un análisis.';
+        const sources = (candidate?.groundingMetadata?.groundingAttributions || []).map(a => ({ uri: a?.web?.uri, title: a?.web?.title })).filter(s => s.uri && s.title);
+
+        displayAppMessage(`✅ Análisis de Orden N° ${record.orderNumber} generado.`, 'success');
+        console.log(`--- Análisis Gemini Orden N° ${record.orderNumber} ---`);
+        console.log(text);
+        if (sources.length) {
+          console.log("\nFuentes:");
+          sources.forEach(s => console.log(`- ${s.title}: ${s.uri}`));
+        }
+        console.log("-----------------------------------------------------");
+
+      } catch (e) {
+        console.error("Error en el análisis con Gemini:", e);
+        const friendlyMessage = e?.message?.startsWith('Gemini API') ? e.message : 'Error al conectar con la IA.';
+        displayAppMessage(friendlyMessage, 'error');
+      }
+    }
+
+    // === GENERACIÓN DE PDF ===
+    const logoBase64 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAoAAAAFeCAYAAABukM3AAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAE9YSURBVHhe7d15fFTV9f/xT5MkARIssEk2WCCybYVdtgq27f4vuIKKBYQLgoJll1244CIIKC44KuiuKCAqKgoKuOAsCKIiKAgKuy2AbLdlQRDZJrBNsEmYJJn+/midmUxyM3fnzklO8v28Pp/JJTfnzM15SXbu3DlzT/f09MTm5ma/u19+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn-girdim';
+
+    function generateRecommendations(record) {
+        const recommendations = new Set();
+        const replacementThreshold = 3.0;
+        const monitorThreshold = 5.0;
+        const irregularWearThreshold = 2.0;
+
+        record.tires.forEach(tire => {
+            const surcos = [tire.surco1, tire.surco2, tire.surco3];
+            const minSurco = Math.min(...surcos);
+            const maxSurco = Math.max(...surcos);
+            const diff = maxSurco - minSurco;
+
+            if (minSurco < replacementThreshold) {
+                recommendations.add(`- Reemplazo Urgente: El neumático en la posición ${tire.position} (${minSurco.toFixed(1)} mm) está por debajo del límite de seguridad.`);
+            } else if (minSurco < monitorThreshold) {
+                recommendations.add(`- Monitorear: El neumático en la posición ${tire.position} (${minSurco.toFixed(1)} mm) se acerca al final de su vida útil.`);
+            }
+
+            if (diff >= irregularWearThreshold) {
+                recommendations.add(`- Revisar Alineación y Balanceo: Se detectó desgaste irregular en la posición ${tire.position} (diferencia de ${diff.toFixed(1)} mm).`);
+            }
+        });
+
+        if (record.tires.length > 2) {
+             recommendations.add('- Planificar Rotación: Considere rotar los neumáticos para promover un desgaste uniforme en el próximo mantenimiento.');
+        }
+
+        recommendations.add('- Verificación de Presión: Es crucial revisar y ajustar la presión de todos los neumáticos semanalmente según las especificaciones del fabricante.');
+
+        if (recommendations.size === 1) { 
+            return ['- Todos los neumáticos se encuentran en buen estado. Continuar con las revisiones periódicas de presión.'];
+        }
+
+        return Array.from(recommendations);
+    }
+
+    window.generatePdf = async function(recordId) {
+        displayAppMessage('Generando PDF, por favor espera...', 'info');
+        
+        try {
+            const record = window.currentRecords.find(r => r.id === recordId);
+            if (!record) throw new Error('Registro no encontrado.');
+
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF();
+
+            try {
+                if (logoBase64) {
+                    doc.addImage(logoBase64, 'PNG', 15, 10, 50, 16);
+                }
+            } catch (e) {
+                console.error("Error al añadir el logo al PDF. Se generará sin logo.", e);
+            }
+
+            doc.setFontSize(22);
+            doc.setFont('helvetica', 'bold');
+            doc.text("Registro de Desgaste de Neumáticos", 195, 20, { align: 'right' });
+            doc.setLineWidth(0.5);
+            doc.line(15, 30, 195, 30);
+
+            let yPos = 40;
+            doc.setFontSize(12);
+            doc.setFont('helvetica', 'bold');
+            doc.text("Información General", 15, yPos);
+            yPos += 8;
+            doc.setFont('helvetica', 'normal');
+            doc.text(`N° Orden: ${record.orderNumber}`, 15, yPos);
+            doc.text(`Fecha: ${new Date(record.date).toLocaleDateString('es-CL', {timeZone: 'UTC'})}`, 105, yPos);
+            yPos += 7;
+            doc.text(`Sucursal: ${record.branchName}`, 15, yPos);
+            doc.text(`Kilometraje: ${record.mileage.toLocaleString('es-CL')} km`, 105, yPos);
+            yPos += 7;
+            doc.text(`Tipo de Vehículo: ${record.vehicleType}`, 15, yPos);
+            yPos += 7;
+            doc.text(`Marca/Modelo General: ${record.generalMakeModel}`, 15, yPos);
+            yPos += 7;
+            doc.text(`Medida General: ${record.tireSize}`, 15, yPos);
+            yPos += 7;
+            if(record.generalComments) {
+                const splitComments = doc.splitTextToSize(`Comentarios: ${record.generalComments}`, 180);
+                doc.text(splitComments, 15, yPos);
+                yPos += (splitComments.length * 5);
+            }
+
+            const tireData = record.tires.map(t => [t.position, t.makeModel, t.surco1.toFixed(1), t.surco2.toFixed(1), t.surco3.toFixed(1)]);
+            doc.autoTable({
+                startY: yPos + 5,
+                head: [['Posición', 'Marca/Modelo', 'Surco 1 (mm)', 'Surco 2 (mm)', 'Surco 3 (mm)']],
+                body: tireData,
+                theme: 'grid',
+                headStyles: { fillColor: [5, 150, 105] },
+                didParseCell: function (data) {
+                    if (data.column.index >= 2 && data.column.index <= 4) {
+                        let value = parseFloat(data.cell.raw);
+                        if (!isNaN(value) && value < 3.0) {
+                            data.cell.styles.fillColor = '#FFDDE0';
+                            data.cell.styles.textColor = '#900C3F';
+                            data.cell.styles.fontStyle = 'bold';
+                        }
+                    }
+                }
+            });
+
+            yPos = doc.lastAutoTable.finalY + 10;
+            
+            // Sección de Recomendaciones
+            doc.setFontSize(14);
+            doc.setFont('helvetica', 'bold');
+            doc.text("Recomendaciones", 15, yPos);
+            yPos += 8;
+
+            const recommendations = generateRecommendations(record);
+            doc.setFontSize(10);
+            doc.setFont('helvetica', 'normal');
+            doc.setTextColor(40);
+            recommendations.forEach(rec => {
+                if (yPos > 270) { 
+                    doc.addPage();
+                    yPos = 20;
+                }
+                const splitText = doc.splitTextToSize(rec, 180);
+                doc.text(splitText, 15, yPos);
+                yPos += (splitText.length * 5) + 2; 
+            });
+            doc.setTextColor(0);
+
+
+            const imageTires = record.tires.filter(t => t.photoURL && t.photoURL !== 'N/A');
+            if (imageTires.length > 0) {
+                 if (yPos > 180) { // Check if there's enough space for the title and at least one image
+                    doc.addPage();
+                    yPos = 20;
+                }
+                doc.setFontSize(14);
+                doc.setFont('helvetica', 'bold');
+                doc.text("Fotografías Adjuntas", 15, yPos);
+                yPos += 10;
+                
+                const imagePromises = imageTires.map(async (tire) => {
+                    try {
+                        const response = await fetch(tire.photoURL);
+                        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                        const blob = await response.blob();
+                        const imageBase64 = await new Promise((resolve, reject) => {
+                            const reader = new FileReader();
+                            reader.onloadend = () => resolve(reader.result);
+                            reader.onerror = reject;
+                            reader.readAsDataURL(blob);
+                        });
+                        return { tire, imageBase64, status: 'fulfilled' };
+                    } catch (e) {
+                        console.error(`No se pudo cargar la imagen para ${tire.position}:`, e);
+                        return { tire, status: 'rejected' };
+                    }
+                });
+
+                const imageResults = await Promise.all(imagePromises);
+
+                for (const result of imageResults) {
+                     if (yPos > 220) { 
+                        doc.addPage();
+                        yPos = 20;
+                    }
+                    doc.setFontSize(10);
+                    doc.setFont('helvetica', 'normal');
+                    if(result.status === 'fulfilled') {
+                        doc.text(`Posición: ${result.tire.position} (${result.tire.makeModel})`, 15, yPos);
+                        doc.addImage(result.imageBase64, 'JPEG', 15, yPos + 3, 80, 60);
+                        yPos += 70;
+                    } else {
+                        doc.text(`- Imagen no disponible para la posición ${result.tire.position}.`, 15, yPos);
+                        yPos += 7;
+                    }
+                }
+            }
+            
+            doc.output('dataurlnewwindow');
+            
+            displayAppMessage('✅ PDF generado con éxito.', 'success');
+
+        } catch (error) {
+            console.error("Error al generar el PDF:", error);
+            displayAppMessage(`Error al generar el PDF: ${error.message}`, 'error');
+        }
+    }
+    
+    // === HELPERS Y UI ===
+    function setUiState(state, message = '') {
+      const errorEl = document.getElementById('firebaseErrorDisplay');
+      const idEl = document.getElementById('userIdDisplay');
+      const formButtons = ['reviewButton', 'saveButton'];
+      
+      errorEl.textContent = '';
+      idEl.textContent = '';
+      let disableButtons = true;
+
+      switch(state) {
+        case 'loading':
+          idEl.textContent = 'Conectando...';
+          break;
+        case 'authenticated':
+          idEl.textContent = message;
+          disableButtons = false;
+          break;
+        case 'unauthenticated':
+          idEl.textContent = 'No autenticado';
+          break;
+        case 'error':
+          errorEl.textContent = message;
+          idEl.textContent = 'Desconectado';
+          break;
+      }
+      
+      formButtons.forEach(id => {
+          const btn = document.getElementById(id);
+          if(btn) btn.disabled = disableButtons;
+      });
+      if(state === 'authenticated' && document.getElementById('vehicleType')?.value) {
+          document.getElementById('reviewButton').disabled = false;
+      }
+    }
+
+    window.switchTab = function(tabName) {
+      ['guide', 'register', 'records'].forEach(tab => {
+        document.getElementById(`tab-button-${tab}`)?.classList.toggle('active', tab === tabName);
+        document.getElementById(`tab-content-${tab}`)?.classList.toggle('hidden', tab !== tabName);
+      });
+      if (tabName === 'guide') updateRandomRecommendation();
+      if (tabName === 'register') resetRegistrationForm();
+    }
+
+    function resetRegistrationForm() {
+      const form = document.getElementById('registrationForm');
+      if (form) form.reset();
+      document.getElementById('tireInputsContainer').innerHTML = '';
+      document.getElementById('reviewFeedback').innerHTML = '';
+      const saveBtn = document.getElementById('saveButton');
+      if (saveBtn) saveBtn.disabled = true;
+      const reviewBtn = document.getElementById('reviewButton');
+      if (reviewBtn) reviewBtn.disabled = true;
+      const dateEl = document.getElementById('date');
+      if (dateEl) dateEl.value = new Date().toISOString().slice(0, 10);
+    }
+
+    window.generateTireInputs = function() {
+      const vehicleType = document.getElementById('vehicleType').value;
+      const container = document.getElementById('tireInputsContainer');
+      container.innerHTML = '';
+      const positions = TIRES_STRUCTURE[vehicleType] || [];
+
+      positions.forEach((position, index) => {
+        const positionDesc = getPositionDescription(position);
+        const block = `
+          <div class="p-4 border border-gray-200 rounded-xl shadow-sm mb-4 bg-white">
+            <h4 class="text-lg font-semibold text-primary mb-2">Neumático - Posición ${index + 1} (${position})</h4>
+            <p class="text-sm text-gray-500 mb-4">${positionDesc}</p>
+            <div class="mb-4">
+              <label class="block text-xs font-medium text-gray-700 mb-1" for="tireMakeModel-${index}">Marca y Modelo (Específico)</label>
+              <select id="tireMakeModel-${index}" name="tireMakeModel_${position}" class="form-control text-sm">
+                <option value="" selected>Usar marca general del formulario</option>
+                ${PREDEFINED_MODELS.map(m => `<option value="${m}">${m}</option>`).join('')}
+              </select>
+            </div>
+            <div class="grid grid-cols-3 gap-2 mb-4">
+              ${[1, 2, 3].map(i => `
+                <div>
+                  <label class="block text-xs font-medium text-gray-700 mb-1" for="surco-${index}-${i}">Surco ${i} (mm)</label>
+                  <input type="number" id="surco-${index}-${i}" name="surco_${position}_${i}" min="0" max="25" step="0.1" class="form-control text-sm" placeholder="Ej: 5.5" required />
+                </div>`).join('')}
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-gray-700 mb-1" for="photo-${index}">Foto (opcional)</label>
+              <input type="file" id="photo-${index}" name="photo_${position}" accept="image/jpeg,image/png" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-secondary/10 file:text-secondary hover:file:bg-secondary/20" />
+            </div>
+          </div>`;
+        container.insertAdjacentHTML('beforeend', block);
+      });
+      document.getElementById('reviewButton').disabled = positions.length === 0 || !authReady;
+    }
+
+    window.handleReview = function(event) {
+        event.preventDefault();
+        const form = document.getElementById('registrationForm');
+        const reviewBtn = document.getElementById('reviewButton');
+        const saveBtn = document.getElementById('saveButton');
+        
+        if (!authReady) {
+            displayReview([{type: 'error', text: 'Base de datos no lista. Espera la autenticación.'}]);
+            return;
+        }
+
+        reviewBtn.disabled = true;
+        reviewBtn.innerHTML = getLoaderSvg("Evaluando...");
+        saveBtn.disabled = true;
+        window.pendingReviewData = null;
+
+        const formData = new FormData(form);
+        const generalData = Object.fromEntries(formData.entries());
+
+        const requiredFields = ['branchName', 'orderNumber', 'mileage', 'date', 'tireSize', 'makeModel'];
+        if (requiredFields.some(field => !generalData[field])) {
+            displayReview([{type: 'error', text: 'Completa todos los campos generales (Sucursal, Orden, KM, Fecha, etc.).'}]);
+            finishReview(reviewBtn);
+            return;
+        }
+
+        const data = {
+            orderNumber: parseInt(generalData.orderNumber),
+            mileage: parseInt(generalData.mileage),
+            date: generalData.date,
+            tireSize: generalData.tireSize,
+            vehicleType: generalData.vehicleType,
+            generalMakeModel: generalData.makeModel,
+            generalComments: generalData.generalComments || '',
+            technicianId: currentUserId,
+            branchName: generalData.branchName,
+            tires: [],
+            photoFiles: []
+        };
+
+        const positions = TIRES_STRUCTURE[data.vehicleType] || [];
+        let dataError = false;
+        let reviewMessages = [];
+
+        positions.forEach(position => {
+            if (dataError) return;
+            const s1 = parseFloat(form[`surco_${position}_1`]?.value);
+            const s2 = parseFloat(form[`surco_${position}_2`]?.value);
+            const s3 = parseFloat(form[`surco_${position}_3`]?.value);
+            const makeModel = form[`tireMakeModel_${position}`]?.value || data.generalMakeModel;
+            const photoFile = form[`photo_${position}`]?.files[0] || null;
+
+            if ([s1, s2, s3].some(v => isNaN(v))) {
+                reviewMessages.push({type: 'error', text: `Error en ${position}: surcos incompletos o inválidos.`});
+                dataError = true; return;
+            }
+
+            const minSurco = Math.min(s1, s2, s3);
+            const maxSurco = Math.max(s1, s2, s3);
+            const diff = maxSurco - minSurco;
+
+            data.tires.push({ position, makeModel, surco1: s1, surco2: s2, surco3: s3 });
+            if (photoFile) data.photoFiles.push({ file: photoFile, position });
+
+            if (minSurco < 3.0) reviewMessages.push({type: 'alert', text: `⚠️ ${position} (${makeModel}) min ${minSurco.toFixed(1)} mm → <strong>REEMPLAZO OBLIGATORIO</strong>.`});
+            else if (minSurco < 5.0) reviewMessages.push({type: 'warning', text: `🟠 ${position} (${makeModel}) min ${minSurco.toFixed(1)} mm → Monitorear, próximo a reemplazo.`});
+            if (diff > 2.0) reviewMessages.push({type: 'alert', text: `🚨 Desgaste irregular en ${position}. Δ ${diff.toFixed(1)} mm → Revisar <strong>alineación y presión</strong>.`});
+        });
+
+        if (dataError) {
+            displayReview(reviewMessages);
+            finishReview(reviewBtn);
+            return;
+        }
+
+        if (reviewMessages.length === 0) {
+            reviewMessages.push({type: 'success', text: '✅ Todos los neumáticos en buen estado. Listo para guardar.'});
+        }
+        
+        window.pendingReviewData = data;
+        saveBtn.disabled = false;
+        displayReview(reviewMessages);
+        finishReview(reviewBtn);
+        displayAppMessage('Revisión completa. Presiona "Guardar Registro".', 'success');
+    }
+
+    function finishReview(btn) {
+      if (authReady) btn.disabled = !document.getElementById('vehicleType')?.value;
+      btn.innerHTML = 'Evaluar Medición';
+    }
+    
+    function displayReview(messages) {
+      const container = document.getElementById('reviewFeedback');
+      const typeClasses = {
+        alert: 'bg-red-100 text-red-800 border-red-400',
+        warning: 'bg-yellow-100 text-yellow-800 border-yellow-400',
+        success: 'bg-green-100 text-green-800 border-green-400 font-bold',
+        error: 'bg-gray-200 text-gray-800 border-red-500 font-bold',
+      };
+      container.innerHTML = messages.map(m => `
+        <div class="p-3 rounded-lg text-sm mb-2 shadow-sm border-l-4 ${typeClasses[m.type] || 'bg-blue-100 text-blue-800 border-blue-400'}">
+          ${m.text}
+        </div>`).join('');
+    }
+
+    function getPositionDescription(pos) {
+      const descriptions = {
+        'P1': 'Eje 1 - Delantera Izquierda (Conductor)', 'P2': 'Eje 1 - Delantera Derecha',
+        'P3': 'Eje 2 - Trasera Izquierda', 'P6': 'Eje 2 - Trasera Derecha',
+        'P4': 'Eje 2 (Interior) - Izquierda (Doble Rodado)', 'P5': 'Eje 2 (Interior) - Derecha (Doble Rodado)',
+        'Repuesto': 'Rueda de Repuesto'
+      };
+      return descriptions[pos] || pos;
+    }
+
+    function getLoaderSvg(label) {
+      return `<svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white inline" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> ${label}`;
+    }
+
+    function displayAppMessage(message, type = 'info') {
+      const container = document.getElementById('appMessage');
+      const typeClasses = {
+        success: 'bg-green-500 text-white',
+        error: 'bg-red-500 text-white',
+        info: 'bg-blue-500 text-white'
+      };
+      container.className = `p-3 rounded-lg text-sm mb-4 font-medium shadow-md transition-all duration-300 ${typeClasses[type]}`;
+      container.textContent = message;
+      container.classList.remove('opacity-0', 'hidden', 'max-h-0', 'py-0', 'mb-0');
+      container.style.maxHeight = '100px';
+
+      setTimeout(() => {
+        container.classList.add('opacity-0');
+        container.style.maxHeight = '0px';
+        setTimeout(() => container.classList.add('hidden'), 300);
+      }, 5000);
+    }
+
+    function updateRandomRecommendation() {
+      const tip = longevityTips[Math.floor(Math.random() * longevityTips.length)];
+      document.getElementById('randomTip').innerHTML = tip;
+    }
+
+    function displayRecords(records) {
+      const container = document.getElementById('recordsTableBody');
+      if (!container) return;
+      if (!records.length) {
+        container.innerHTML = '<tr><td colspan="7" class="text-center py-8 text-gray-500">No hay registros disponibles.</td></tr>';
+        return;
+      }
+      container.innerHTML = records.map(record => {
+        const dateStr = record.date ? new Date(record.date).toLocaleDateString('es-CL', {timeZone: 'UTC'}) : '-';
+        const minSurco = (record.tires || []).reduce((min, t) => Math.min(min, t.surco1, t.surco2, t.surco3), 99);
+        const criticalClass = minSurco < 3.0 ? 'bg-red-100 text-red-800 font-bold' : (minSurco < 5.0 ? 'bg-yellow-100 text-yellow-800' : 'text-gray-700');
+        return `
+          <tr class="border-b hover:bg-gray-50 transition">
+            <td class="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">${record.orderNumber}</td>
+            <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-600 font-semibold">${record.branchName || 'N/A'}</td>
+            <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${record.vehicleType}</td>
+            <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${(record.mileage || 0).toLocaleString('es-CL')} km</td>
+            <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${dateStr}</td>
+            <td class="px-4 py-3 whitespace-nowrap text-sm ${criticalClass}">${isFinite(minSurco) ? minSurco.toFixed(1) : '-'} mm</td>
+            <td class="px-4 py-3 whitespace-nowrap text-right text-sm font-medium">
+              <div class="flex items-center justify-end gap-2">
+                <button onclick="window.generatePdf('${record.id}')" class="text-red-600 hover:text-red-800 p-2 rounded-lg transition hover:bg-red-100" title="Generar PDF">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                    <path d="M14 14V4.5L9.5 0H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2zM9.5 1.5L14 6v8.5a.5.5 0 0 1-.5.5H4a.5.5 0 0 1-.5-.5v-12A.5.5 0 0 1 4 1.5h5.5z"/>
+                    <path d="M4.603 12.087a.81.81 0 0 1-.438.448l-.175.082a.558.558 0 0 1-.685-.28.52.52 0 0 1 .035-.634l.116-.117.175-.082a.81.81 0 0 1 .438-.448l.175-.082.685.28a.52.52 0 0 1-.035.634l-.116.117-.175.082zm1.833-1.422a.512.512 0 0 1-.028.682l-.206.206a.512.512 0 0 1-.682.028l-.206-.206a.512.512 0 0 1 .028-.682l.206-.206a.512.512 0 0 1 .682-.028l.206.206zm.208.64a.512.512 0 0 1-.028.682l-.206.206a.512.512 0 0 1-.682.028l-.206-.206a.512.512 0 0 1 .028-.682l.206-.206a.512.512 0 0 1 .682-.028l.206.206zm1.758-1.55a.512.512 0 0 1 .686.252l.206.411a.512.512 0 0 1-.252.686l-.411.206a.512.512 0 0 1-.686-.252l-.206-.411a.512.512 0 0 1 .252-.686l.411.206zm.686.645a.512.512 0 0 1 .252.686l-.206.411a.512.512 0 0 1-.686.252l-.411-.206a.512.512 0 0 1-.252-.686l.206-.411a.512.512 0 0 1 .686-.252l.411.206zM8.579 14.3a.512.512 0 0 1 .252.686l-.206.411a.512.512 0 0 1-.686.252l-.411-.206a.512.512 0 0 1-.252-.686l.206-.411a.512.512 0 0 1 .686-.252l.411.206zm2.814-2.97a.512.512 0 0 1 .686.252l.206.411a.512.512 0 0 1-.252.686l-.411.206a.512.512 0 0 1-.686-.252l-.206-.411a.512.512 0 0 1 .252-.686l.411.206zm.686.645a.512.512 0 0 1 .252.686l-.206.411a.512.512 0 0 1-.686.252l-.411-.206a.512.512 0 0 1-.252-.686l.206-.411a.512.512 0 0 1 .686-.252l.411.206zM11.803 14.3a.512.512 0 0 1 .252.686l-.206.411a.512.512 0 0 1-.686.252l-.411-.206a.512.512 0 0 1-.252-.686l.206-.411a.512.512 0 0 1 .686-.252l.411.206z"/>
+                  </svg>
+                </button>
+                <button onclick="window.analyzeRecord('${record.id}')" class="text-primary hover:text-secondary p-2 rounded-lg transition hover:bg-primary/10 flex items-center gap-2">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3c7.2 0 9 1.8 9 9s-1.8 9-9 9-9-1.8-9-9 1.8-9 9-9"/><path d="M12 15h.01"/><path d="M12 12V9"/></svg>
+                  Analizar
+                </button>
+              </div>
+            </td>
+          </tr>`;
+      }).join('');
+    }
+
+    function formatRecordForPrompt(record) {
+      let detail = `Sucursal: ${record.branchName || "N/A"}\n`;
+      detail += `Tipo Vehículo: ${record.vehicleType}\n`;
+      detail += `Medida General: ${record.tireSize || 'N/A'}\n`;
+      detail += `Marca/Modelo General: ${record.generalMakeModel}\n`;
+      detail += `Comentarios: "${record.generalComments || 'Ninguno'}"\n\n`;
+      detail += "Estado de Neumáticos:\n";
+      (record.tires || []).forEach(t => {
+        const minSurco = Math.min(t.surco1, t.surco2, t.surco3);
+        const maxSurco = Math.max(t.surco1, t.surco2, t.surco3);
+        const diff = maxSurco - minSurco;
+        detail += `- ${t.position} (${t.makeModel}): ${t.surco1}/${t.surco2}/${t.surco3} mm. Mín: ${minSurco.toFixed(1)}. Δ: ${diff.toFixed(1)} mm.\n`;
+      });
+      detail += "\nLímite legal flota: 3.0 mm.";
+      return detail;
+    }
+
+    window.exportToCsv = function() {
+      if (!window.currentRecords.length) return displayAppMessage('No hay datos para exportar', 'error');
+      let csvContent = "data:text/csv;charset=utf-8,";
+      const superset = Array.from(new Set(Object.values(TIRES_STRUCTURE).flat()));
+      const headers = [
+        "Orden", "Sucursal", "Kilometraje", "Fecha", "Tipo Vehículo", "Marca General", "Medida", "Comentarios", "ID Técnico",
+        ...superset.flatMap(pos => [`Modelo_${pos}`, `Surco1_${pos}`, `Surco2_${pos}`, `Surco3_${pos}`, `FotoURL_${pos}`])
+      ];
+      csvContent += headers.join(";") + "\r\n";
+
+      window.currentRecords.forEach(record => {
+        const tireMap = (record.tires || []).reduce((acc, t) => ({ ...acc, [t.position]: t }), {});
+        const row = [
+          record.orderNumber, record.branchName || 'N/A', record.mileage, record.date, record.vehicleType,
+          record.generalMakeModel, record.tireSize, `"${(record.generalComments || '').replace(/"/g, '""')}"`, record.technicianId,
+          ...superset.flatMap(pos => {
+            const t = tireMap[pos];
+            return [t ? t.makeModel : '', t ? t.surco1 : '', t ? t.surco2 : '', t ? t.surco3 : '', t && t.photoURL !== 'N/A' ? t.photoURL : ''];
+          })
+        ];
+        csvContent += row.join(";") + "\r\n";
+      });
+
+      const encodedUri = encodeURI(csvContent);
+      const link = document.createElement("a");
+      link.setAttribute("href", encodedUri);
+      link.setAttribute("download", `registros_neumaticos_${new Date().toISOString().slice(0, 10)}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      displayAppMessage('Exportación a CSV completada.', 'success');
+    }
+    
+    // === INICIO DE LA APP ===
+    window.onload = function() {
+      initializeAppCore().then(() => {
+        const makeModelSelect = document.getElementById('makeModel');
+        const tireSizeSelect = document.getElementById('tireSize');
+        const branchSelect = document.getElementById('branchName');
+        PREDEFINED_MODELS.forEach(m => makeModelSelect.insertAdjacentHTML('beforeend', `<option value="${m}">${m}</option>`));
+        PREDEFINED_SIZES.forEach(s => tireSizeSelect.insertAdjacentHTML('beforeend', `<option value="${s}">${s}</option>`));
+        BRANCHES.forEach(b => branchSelect.insertAdjacentHTML('beforeend', `<option value="${b}">${b}</option>`));
+        
+        window.switchTab('guide');
+      });
+    }
+  </script>
+</head>
+
+<body class="bg-background">
+  <div id="app-container" class="flex flex-col">
+    <!-- Encabezado Fijo -->
+    <header class="bg-white shadow-md sticky top-0 z-10">
+      <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-3">
+        <div class="flex justify-between items-center">
+          <h1 class="text-2xl font-bold text-gray-800">
+            <span class="text-primary">Flota</span> TRACK
+          </h1>
+          <div class="flex items-center space-x-4">
+            <span id="firebaseErrorDisplay" class="text-sm font-medium text-red-600"></span>
+            <span id="userIdDisplay" class="text-sm font-medium text-gray-600"></span>
+          </div>
+        </div>
+      </div>
+      <!-- Navegación por Pestañas -->
+      <nav class="border-t border-gray-200">
+        <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div class="flex space-x-4 sm:space-x-8 -mb-px">
+            <button id="tab-button-guide" onclick="switchTab('guide')" type="button" class="tab-button">Guía Rápida</button>
+            <button id="tab-button-register" onclick="switchTab('register')" type="button" class="tab-button">Registrar</button>
+            <button id="tab-button-records" onclick="switchTab('records')" type="button" class="tab-button">Historial</button>
+          </div>
+        </div>
+      </nav>
+    </header>
+
+    <!-- Contenido Principal -->
+    <main class="flex-grow max-w-4xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8">
+      <!-- Mensajes Globales de la App -->
+      <div id="appMessage" class="hidden opacity-0 max-h-0 transition-all duration-300"></div>
+
+      <!-- Contenido de Pestañas -->
+      <div id="tab-content-guide" class="hidden">
+        <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+            <h2 class="text-xl font-bold text-gray-800 mb-4">Bienvenido a Flota TRACK</h2>
+            <p class="text-gray-600 mb-6">Esta herramienta te permite registrar y analizar el estado de los surcos de los neumáticos de tu flota. Sigue estos pasos para un uso correcto:</p>
+            <ol class="list-decimal list-inside space-y-3 text-gray-700">
+                <li><strong>Registrar Medición:</strong> Ve a la pestaña "Registrar", completa los datos del vehículo y mide los 3 surcos principales de cada neumático.</li>
+                <li><strong>Evaluar:</strong> Presiona "Evaluar Medición" para obtener un diagnóstico inmediato sobre el estado y las acciones recomendadas.</li>
+                <li><strong>Guardar:</strong> Si la evaluación es correcta, guarda el registro. Quedará almacenado en el "Historial".</li>
+                <li><strong>Analizar con IA:</strong> En el historial, usa el botón "✨ Analizar" para que un experto virtual te dé recomendaciones avanzadas sobre mantenimiento y rotación.</li>
+            </ol>
+             <div class="mt-8 p-4 bg-primary/10 border-l-4 border-primary rounded-r-lg">
+                <h3 class="font-semibold text-primary mb-2">Consejo de longevidad</h3>
+                <p id="randomTip" class="text-sm text-gray-700"></p>
+            </div>
+        </div>
+      </div>
+
+      <div id="tab-content-register" class="hidden">
+        <form id="registrationForm" onsubmit="handleReview(event)">
+          <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-200 mb-6">
+            <h3 class="text-xl font-bold text-gray-800 mb-4">1. Datos Generales del Vehículo</h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label for="branchName" class="block text-sm font-medium text-gray-700 mb-1">Sucursal</label>
+                <select id="branchName" name="branchName" class="form-control" required><option value="" disabled selected>Selecciona una sucursal...</option></select>
+              </div>
+              <div>
+                <label for="orderNumber" class="block text-sm font-medium text-gray-700 mb-1">Número de Orden</label>
+                <input type="number" id="orderNumber" name="orderNumber" class="form-control" placeholder="Ej: 12345" required />
+              </div>
+              <div>
+                <label for="mileage" class="block text-sm font-medium text-gray-700 mb-1">Kilometraje</label>
+                <input type="number" id="mileage" name="mileage" class="form-control" placeholder="Ej: 85000" required />
+              </div>
+              <div>
+                <label for="date" class="block text-sm font-medium text-gray-700 mb-1">Fecha de Medición</label>
+                <input type="date" id="date" name="date" class="form-control" required />
+              </div>
+              <div>
+                <label for="tireSize" class="block text-sm font-medium text-gray-700 mb-1">Medida General</label>
+                <select id="tireSize" name="tireSize" class="form-control" required><option value="" disabled selected>Selecciona una medida...</option></select>
+              </div>
+              <div>
+                <label for="makeModel" class="block text-sm font-medium text-gray-700 mb-1">Marca/Modelo General</label>
+                <select id="makeModel" name="makeModel" class="form-control" required><option value="" disabled selected>Selecciona una marca...</option></select>
+              </div>
+               <div class="md:col-span-2">
+                <label for="generalComments" class="block text-sm font-medium text-gray-700 mb-1">Comentarios Generales</label>
+                <textarea id="generalComments" name="generalComments" rows="2" class="form-control" placeholder="Observaciones sobre el vehículo, alineación, etc."></textarea>
+              </div>
+            </div>
+          </div>
+
+          <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-200 mb-6">
+            <h3 class="text-xl font-bold text-gray-800 mb-4">2. Selección y Medición</h3>
+             <div>
+                <label for="vehicleType" class="block text-sm font-medium text-gray-700 mb-1">Tipo de Vehículo</label>
+                <select id="vehicleType" name="vehicleType" class="form-control" onchange="generateTireInputs()" required>
+                  <option value="" disabled selected>Selecciona un tipo para generar los campos...</option>
+                  <option value="Bus">Bus</option>
+                  <option value="Taxibus">Taxibus</option>
+                  <option value="Minibús">Minibús</option>
+                  <option value="Minibús DR (Doble Rodado)">Minibús DR (Doble Rodado)</option>
+                  <option value="Camioneta">Camioneta</option>
+                </select>
+              </div>
+          </div>
+
+          <div id="tireInputsContainer" class="mb-6"></div>
+          
+          <div id="reviewFeedback" class="mb-6"></div>
+
+          <div class="flex items-center justify-end space-x-4">
+            <button id="reviewButton" type="submit" class="px-6 py-3 bg-accent text-gray-800 font-bold rounded-lg shadow-sm hover:bg-yellow-400 transition disabled:bg-gray-300 disabled:cursor-not-allowed">
+              Evaluar Medición
+            </button>
+            <button id="saveButton" type="button" onclick="handleSave()" class="px-6 py-3 bg-primary text-white font-bold rounded-lg shadow-sm hover:bg-secondary transition disabled:bg-green-800 disabled:cursor-not-allowed" disabled>
+              Guardar Registro
+            </button>
+          </div>
+        </form>
+      </div>
+
+      <div id="tab-content-records" class="hidden">
+         <div class="flex justify-between items-center mb-4">
+            <h2 class="text-xl font-bold text-gray-800">Historial de Registros</h2>
+            <button onclick="exportToCsv()" class="px-4 py-2 bg-secondary text-white font-semibold text-sm rounded-lg shadow-sm hover:bg-primary transition">
+              Exportar a CSV
+            </button>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-x-auto">
+            <table class="w-full text-left">
+                <thead class="bg-gray-50 border-b">
+                    <tr>
+                        <th class="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">Orden</th>
+                        <th class="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">Sucursal</th>
+                        <th class="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">Vehículo</th>
+                        <th class="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">KM</th>
+                        <th class="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">Fecha</th>
+                        <th class="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">Surco Mín.</th>
+                        <th class="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider text-right">Acciones</th>
                     </tr>
                 </thead>
                 <tbody id="recordsTableBody">
