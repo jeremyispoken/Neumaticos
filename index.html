@@ -64,6 +64,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
 
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
@@ -85,16 +86,32 @@
     const PREDEFINED_MODELS = [
       'Michelin X Multiway 3D XZE', 'Pirelli FH:01 Energy', 'Bridgestone R260', 'Dunlop SP338', 'Goodyear KMAX S', 'Continental HT3', 'Hankook SmartFlex AH31', 'Westlake CB867', 'Sailun S701'
     ];
-    const PREDEFINED_SIZES = ['225/75R16', '215/75R16', '275/80R22.5'];
-    const FLEET_SHARE_ID = 'u!aHR0cHM6Ly8xZHJ2Lm1zL3gvYy80ZTllNTI1OTI0MGMzNzFiL0VSczNEQ1JaVXA0Z2dFNlJBQUFBQUFBQlRScUl1ZGJRRXRWUDN3akdkSVkxbXc_ZT13Z0tvUTk';
-    const FLEET_DOWNLOAD_URL = `https://api.onedrive.com/v1.0/shares/${FLEET_SHARE_ID}/root/content`;
+    const PREDEFINED_SIZES = ['225/75R16', '245/70R19.5', '275/80R22.5', '295/80R22.5', '315/80R22.5', '11R22.5', '12R22.5', '10.00R20'];
     const FLEET_SHEET_NAME = 'Flota Verschae';
+    const FLEET_DATA_STORAGE_KEY = 'flota-track-fleet-dataset-v1';
+    const FLEET_DATA_META_STORAGE_KEY = 'flota-track-fleet-dataset-meta-v1';
     const ORDER_KEYWORDS = ['orden', 'n° orden', 'nº orden', 'numero orden', 'orden vehículo', 'orden vehiculo'];
     const MOBILE_KEYWORDS = ['móvil', 'movil', 'n° movil', 'nº movil', 'nro movil', 'numero movil'];
     const PLATE_KEYWORDS = ['patente', 'placa', 'matricula'];
-    const MILEAGE_KEYWORDS = ['kilometraje', 'km', 'kilometros', 'kilómetros', 'odometro', 'odómetro'];
+    const MILEAGE_KEYWORDS = ['kilometraje', 'km', 'kilometros', 'kilómetros', 'odometro', 'odómetro', 'última mantencion', 'ultima mantencion', 'kms de mant.'];
+    const TYPE_KEYWORDS = ['tipo de transporte', 'tipo'];
+    const STATUS_KEYWORDS = ['status', 'estado mp', 'estado'];
+    const MAKE_KEYWORDS = ['marca'];
+    const MODEL_KEYWORDS = ['modelo'];
+    const YEAR_KEYWORDS = ['año', 'ano'];
+    const ZONE_KEYWORDS = ['zonal', 'zona'];
+    const LAST_MILEAGE_KEYWORDS = ['ultimo kilometraje', 'último kilometraje'];
+    const LAST_MILEAGE_DATE_KEYWORDS = ['fecha ultimo kilometraje', 'fecha último kilometraje'];
+    const DISTANCE_TRAVELED_KEYWORDS = ['km. recorrido', 'km recorrido'];
+    const LAST_MAINTENANCE_KM_KEYWORDS = ['km. última mantencion', 'km ultima mantencion'];
+    const LAST_MAINTENANCE_DATE_KEYWORDS = ['fecha última mantencion', 'fecha ultima mantencion'];
+    const MAINTENANCE_PLAN_KEYWORDS = ['pauta última mantencion', 'pauta ultima mantencion'];
+    const MAINTENANCE_KM_KEYWORDS = ['kms de mant.', 'kms de mantencion', 'km mantencion'];
+    const REMAINING_KM_KEYWORDS = ['falta', 'faltante', 'km restante'];
+    const MAINTENANCE_STATUS_KEYWORDS = ['estado mp', 'estado mantencion', 'estado mantenimiento'];
     const FLEET_FALLBACK_INDEX = { order: 2, mobile: 2, plate: 3, mileage: 13 };
     const CATALOG_STORAGE_KEY = 'flota-track-catalog';
+    const DEFAULT_KM_ALERT_THRESHOLD = 1000;
     const longevityTips = [
       "Mantén la <strong>presión correcta</strong> semanalmente. La subinflación es el principal asesino de neumáticos.",
       "Realiza la <strong>rotación</strong> cada 10–12 mil km para asegurar un desgaste uniforme.",
@@ -117,8 +134,12 @@
     let fleetEntries = [];
     let fleetLoadStatus = 'idle';
     let fleetLoadError = '';
+    let fleetDatasetMeta = null;
     let customModels = [];
     let customSizes = [];
+    let maintenanceStatusChart = null;
+    let dashboardStatusFilter = 'Todos';
+    let dashboardCachedEntries = [];
 
     function normalizeOrderKey(value) {
       if (value === null || value === undefined) return '';
@@ -140,6 +161,79 @@
       const value = row[index];
       if (value === null || value === undefined) return '';
       return String(value).trim();
+    }
+
+    function getCellValue(row, index) {
+      if (!Array.isArray(row) || typeof index !== 'number' || index < 0) return null;
+      if (index >= row.length) return null;
+      return row[index];
+    }
+
+    function parseNumeric(value) {
+      if (value === null || value === undefined || value === '') return null;
+      if (typeof value === 'number' && Number.isFinite(value)) return value;
+      const normalized = String(value)
+        .trim()
+        .replace(/\s+/g, '')
+        .replace(/\.(?=\d{3}(?:\D|$))/g, '')
+        .replace(/,/g, '.')
+        .replace(/[^0-9.-]/g, '');
+      if (!normalized || normalized === '-' || normalized === '.') return null;
+      const parsed = parseFloat(normalized);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+
+    function formatDateValue(value) {
+      if (value === null || value === undefined || value === '') return '';
+      if (value instanceof Date) {
+        return Number.isNaN(value.getTime()) ? '' : value.toISOString().slice(0, 10);
+      }
+      if (typeof value === 'number' && typeof XLSX !== 'undefined' && XLSX.SSF && XLSX.SSF.parse_date_code) {
+        const parsed = XLSX.SSF.parse_date_code(value);
+        if (parsed) {
+          const iso = new Date(Date.UTC(parsed.y, parsed.m - 1, parsed.d));
+          return Number.isNaN(iso.getTime()) ? '' : iso.toISOString().slice(0, 10);
+        }
+      }
+      const stringValue = String(value).trim();
+      if (!stringValue) return '';
+      const asDate = new Date(stringValue);
+      if (!Number.isNaN(asDate.getTime())) {
+        return asDate.toISOString().slice(0, 10);
+      }
+      return stringValue;
+    }
+
+    function parseDateCell(row, index) {
+      const raw = getCellValue(row, index);
+      return formatDateValue(raw);
+    }
+
+    function parseNumericCell(row, index) {
+      const raw = getCellValue(row, index);
+      const parsed = parseNumeric(raw);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+
+    function parseStringCell(row, index) {
+      const raw = getCellValue(row, index);
+      if (raw === null || raw === undefined) return '';
+      return String(raw).trim();
+    }
+
+    function resolveAutofillMileage(entry) {
+      if (!entry) return null;
+      const candidates = [entry.mileage, entry.lastMileage, entry.maintenanceKm, entry.lastMaintenanceKm];
+      for (const candidate of candidates) {
+        if (typeof candidate === 'number' && Number.isFinite(candidate)) {
+          return Math.round(candidate);
+        }
+        const parsed = parseNumeric(candidate);
+        if (Number.isFinite(parsed)) {
+          return Math.round(parsed);
+        }
+      }
+      return null;
     }
 
     function loadCatalogFromStorage() {
@@ -308,8 +402,8 @@
       const feedback = document.getElementById('orderNumberFeedback');
       if (!orderInput || !feedback) return;
       if (status === 'loading') {
-        orderInput.placeholder = 'Cargando catálogo de flota...';
-        feedback.textContent = 'Conectando a la hoja "Flota Verschae"...';
+        orderInput.placeholder = 'Buscando catálogo de flota...';
+        feedback.textContent = 'Restaurando la hoja "Flota Verschae" almacenada en este navegador...';
         feedback.className = 'mt-1 text-xs text-gray-500';
       } else if (status === 'ready') {
         orderInput.placeholder = 'Escribe o selecciona una orden de la flota';
@@ -319,7 +413,7 @@
         }
       } else if (status === 'error') {
         orderInput.placeholder = 'Ingresa el número de orden';
-        feedback.textContent = 'No se pudo validar automáticamente. Ingresa el N° manualmente y verifica en la planilla.';
+        feedback.textContent = error ? String(error) : 'No se pudo validar automáticamente. Ingresa el N° manualmente y verifica en la planilla.';
         feedback.className = 'mt-1 text-xs text-amber-600';
         orderInput.classList.remove('input-valid', 'input-invalid');
         orderInput.setCustomValidity('');
@@ -376,8 +470,11 @@
           if (plateInput) {
             plateInput.value = match.plate || 'Sin patente registrada';
           }
-          if (mileageInput && match.mileage !== null && match.mileage !== undefined && match.mileage !== '') {
-            mileageInput.value = match.mileage;
+          if (mileageInput) {
+            const resolvedMileage = resolveAutofillMileage(match);
+            if (resolvedMileage !== null) {
+              mileageInput.value = resolvedMileage;
+            }
           }
           return;
         }
@@ -419,28 +516,85 @@
       }
     }
 
-    async function loadFleetDataset() {
-      if (typeof XLSX === 'undefined') {
-        console.warn('La librería XLSX no está disponible.');
-        return;
-      }
+    function loadFleetDataset() {
       setOrderInputState('loading');
+      const stored = restoreFleetDatasetFromStorage();
+      if (stored && Array.isArray(stored.entries) && stored.entries.length) {
+        applyFleetDataset(stored.entries, { skipSave: true, meta: stored.meta || null });
+      } else {
+        fleetEntries = [];
+        fleetLookup = new Map();
+        fleetDatasetMeta = null;
+        refreshOrderDatalist();
+        setOrderInputState('error', 'Sube la planilla de flota desde la pestaña Catálogo.');
+        showFleetUploadFeedback('Sube la planilla de flota desde la pestaña Catálogo para habilitar la validación automática.', 'warning');
+        updateFleetDatasetSummary();
+        renderFleetDashboard([]);
+      }
+    }
+
+    function restoreFleetDatasetFromStorage() {
       try {
-        const response = await fetch(FLEET_DOWNLOAD_URL, { cache: 'no-store', mode: 'cors' });
-        if (!response.ok) {
-          throw new Error(`Error ${response.status} al obtener la planilla`);
+        const raw = localStorage.getItem(FLEET_DATA_STORAGE_KEY);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed) || !parsed.length) return null;
+        const metaRaw = localStorage.getItem(FLEET_DATA_META_STORAGE_KEY);
+        const meta = metaRaw ? JSON.parse(metaRaw) : null;
+        return { entries: parsed, meta };
+      } catch (error) {
+        console.warn('No se pudo restaurar el dataset de flota almacenado:', error);
+        return null;
+      }
+    }
+
+    function saveFleetDatasetToStorage(entries, meta = {}) {
+      try {
+        const sanitized = sanitizeFleetEntries(entries);
+        localStorage.setItem(FLEET_DATA_STORAGE_KEY, JSON.stringify(sanitized));
+        const payloadMeta = {
+          updatedAt: meta.updatedAt || new Date().toISOString(),
+          sourceName: meta.sourceName || meta.source || 'Importación manual'
+        };
+        localStorage.setItem(FLEET_DATA_META_STORAGE_KEY, JSON.stringify(payloadMeta));
+        fleetDatasetMeta = payloadMeta;
+      } catch (error) {
+        console.warn('No se pudo guardar el dataset de flota:', error);
+      }
+    }
+
+    function clearFleetDatasetStorage() {
+      localStorage.removeItem(FLEET_DATA_STORAGE_KEY);
+      localStorage.removeItem(FLEET_DATA_META_STORAGE_KEY);
+    }
+
+    function applyFleetDataset(entries, options = {}) {
+      const sanitized = sanitizeFleetEntries(entries);
+      fleetEntries = sanitized;
+      fleetLookup = new Map();
+      sanitized.forEach(entry => {
+        if (entry && entry.normalizedOrder && !fleetLookup.has(entry.normalizedOrder)) {
+          fleetLookup.set(entry.normalizedOrder, entry);
         }
-        const arrayBuffer = await response.arrayBuffer();
-        parseFleetWorkbook(arrayBuffer);
+      });
+      if (!options.skipSave) {
+        saveFleetDatasetToStorage(sanitized, options.meta || {});
+      } else if (options && Object.prototype.hasOwnProperty.call(options, 'meta')) {
+        fleetDatasetMeta = options.meta || null;
+      }
+
+      if (sanitized.length) {
         setOrderInputState('ready');
         refreshOrderDatalist();
         handleOrderNumberInput();
-      } catch (error) {
-        console.error('No se pudo cargar la planilla de flota:', error);
-        fleetLookup = new Map();
-        fleetEntries = [];
-        setOrderInputState('error', error);
+        if (options.skipSave) {
+          showFleetUploadFeedback('Catálogo restaurado desde este navegador.', 'info');
+        }
+      } else {
+        setOrderInputState('error', 'La planilla no contiene registros válidos.');
       }
+      updateFleetDatasetSummary();
+      renderFleetDashboard(sanitized);
     }
 
     function parseFleetWorkbook(arrayBuffer) {
@@ -450,47 +604,501 @@
         throw new Error(`La hoja "${FLEET_SHEET_NAME}" no existe en el archivo.`);
       }
       const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
-      if (!rows.length) {
+      return buildFleetEntriesFromRows(rows);
+    }
+
+    function buildFleetEntriesFromRows(rows) {
+      if (!Array.isArray(rows) || !rows.length) {
         throw new Error('La hoja seleccionada está vacía.');
       }
-      const headers = rows[0];
-      const orderIndex = findColumnIndex(headers, ORDER_KEYWORDS, FLEET_FALLBACK_INDEX.order);
-      const mobileIndex = findColumnIndex(headers, MOBILE_KEYWORDS, FLEET_FALLBACK_INDEX.mobile);
-      const plateIndex = findColumnIndex(headers, PLATE_KEYWORDS, FLEET_FALLBACK_INDEX.plate);
-      const mileageIndex = findColumnIndex(headers, MILEAGE_KEYWORDS, FLEET_FALLBACK_INDEX.mileage);
+      const headers = rows[0] || [];
+      const maxColumns = rows.reduce((max, row) => Array.isArray(row) ? Math.max(max, row.length) : max, Array.isArray(headers) ? headers.length : 0);
+      const clampIndex = (candidate, fallbackPreference) => {
+        if (typeof candidate === 'number' && candidate >= 0 && candidate < maxColumns) {
+          return candidate;
+        }
+        const adjusted = typeof fallbackPreference === 'number' ? fallbackPreference : 0;
+        if (maxColumns === 0) return 0;
+        if (adjusted >= 0 && adjusted < maxColumns) return adjusted;
+        return Math.max(0, Math.min(maxColumns - 1, adjusted));
+      };
+
+      const orderIndex = clampIndex(findColumnIndex(headers, ORDER_KEYWORDS, FLEET_FALLBACK_INDEX.order), FLEET_FALLBACK_INDEX.order);
+      const mobileIndex = clampIndex(findColumnIndex(headers, MOBILE_KEYWORDS, FLEET_FALLBACK_INDEX.mobile), orderIndex);
+      const plateIndex = clampIndex(findColumnIndex(headers, PLATE_KEYWORDS, FLEET_FALLBACK_INDEX.plate), FLEET_FALLBACK_INDEX.plate);
+      const mileageIndex = clampIndex(findColumnIndex(headers, MILEAGE_KEYWORDS, FLEET_FALLBACK_INDEX.mileage), FLEET_FALLBACK_INDEX.mileage);
+
+      const typeIndex = findColumnIndex(headers, TYPE_KEYWORDS, -1);
+      const statusIndex = findColumnIndex(headers, STATUS_KEYWORDS, -1);
+      const makeIndex = findColumnIndex(headers, MAKE_KEYWORDS, -1);
+      const modelIndex = findColumnIndex(headers, MODEL_KEYWORDS, -1);
+      const yearIndex = findColumnIndex(headers, YEAR_KEYWORDS, -1);
+      const zoneIndex = findColumnIndex(headers, ZONE_KEYWORDS, -1);
+      const lastMileageIndex = findColumnIndex(headers, LAST_MILEAGE_KEYWORDS, -1);
+      const lastMileageDateIndex = findColumnIndex(headers, LAST_MILEAGE_DATE_KEYWORDS, -1);
+      const distanceIndex = findColumnIndex(headers, DISTANCE_TRAVELED_KEYWORDS, -1);
+      const lastMaintenanceKmIndex = findColumnIndex(headers, LAST_MAINTENANCE_KM_KEYWORDS, -1);
+      const lastMaintenanceDateIndex = findColumnIndex(headers, LAST_MAINTENANCE_DATE_KEYWORDS, -1);
+      const maintenancePlanIndex = findColumnIndex(headers, MAINTENANCE_PLAN_KEYWORDS, -1);
+      const maintenanceKmIndex = findColumnIndex(headers, MAINTENANCE_KM_KEYWORDS, -1);
+      const remainingKmIndex = findColumnIndex(headers, REMAINING_KM_KEYWORDS, -1);
+      const maintenanceStatusIndex = findColumnIndex(headers, MAINTENANCE_STATUS_KEYWORDS, -1);
 
       const entries = [];
-      const lookup = new Map();
 
       rows.slice(1).forEach((row) => {
-        if (!row || row.every(cell => String(cell || '').trim() === '')) return;
-        const rawOrder = safeCellValue(row, orderIndex);
-        const rawMobile = safeCellValue(row, mobileIndex);
+        if (!row || row.every(cell => String(cell ?? '').trim() === '')) return;
+        const rawOrder = parseStringCell(row, orderIndex);
+        const rawMobile = parseStringCell(row, mobileIndex);
         const displayOrder = rawOrder || rawMobile;
         const normalizedOrder = normalizeOrderKey(displayOrder || rawMobile);
         if (!normalizedOrder) return;
-        const plate = safeCellValue(row, plateIndex).toUpperCase();
-        const mileageValue = safeCellValue(row, mileageIndex);
-        const mileage = mileageValue ? parseInt(mileageValue.replace(/[^0-9]/g, ''), 10) : null;
+
         const entry = {
           orderNumber: displayOrder || normalizedOrder,
           normalizedOrder,
-          plate,
-          mileage: Number.isFinite(mileage) ? mileage : null
+          mobileNumber: rawMobile || displayOrder || normalizedOrder,
+          plate: parseStringCell(row, plateIndex).toUpperCase(),
+          mileage: parseNumericCell(row, mileageIndex),
+          typeTransport: typeIndex >= 0 ? parseStringCell(row, typeIndex) : '',
+          status: statusIndex >= 0 ? parseStringCell(row, statusIndex) : '',
+          make: makeIndex >= 0 ? parseStringCell(row, makeIndex) : '',
+          model: modelIndex >= 0 ? parseStringCell(row, modelIndex) : '',
+          year: yearIndex >= 0 ? (() => {
+            const parsed = parseNumericCell(row, yearIndex);
+            return Number.isFinite(parsed) ? Math.round(parsed) : null;
+          })() : null,
+          zone: zoneIndex >= 0 ? parseStringCell(row, zoneIndex) : '',
+          lastMileage: lastMileageIndex >= 0 ? parseNumericCell(row, lastMileageIndex) : null,
+          lastMileageDate: lastMileageDateIndex >= 0 ? parseDateCell(row, lastMileageDateIndex) : '',
+          distanceTraveled: distanceIndex >= 0 ? parseNumericCell(row, distanceIndex) : null,
+          lastMaintenanceKm: lastMaintenanceKmIndex >= 0 ? parseNumericCell(row, lastMaintenanceKmIndex) : null,
+          lastMaintenanceDate: lastMaintenanceDateIndex >= 0 ? parseDateCell(row, lastMaintenanceDateIndex) : '',
+          maintenancePlan: maintenancePlanIndex >= 0 ? parseStringCell(row, maintenancePlanIndex) : '',
+          maintenanceKm: maintenanceKmIndex >= 0 ? parseNumericCell(row, maintenanceKmIndex) : null,
+          kmRemaining: remainingKmIndex >= 0 ? parseNumericCell(row, remainingKmIndex) : null,
+          maintenanceStatus: maintenanceStatusIndex >= 0 ? parseStringCell(row, maintenanceStatusIndex) : ''
         };
-        entries.push(entry);
-        if (!lookup.has(normalizedOrder)) {
-          lookup.set(normalizedOrder, entry);
+
+        if (entry.mileage === null || entry.mileage === undefined) {
+          const fallbackMileage = [entry.lastMileage, entry.maintenanceKm, entry.lastMaintenanceKm].find(val => typeof val === 'number' && Number.isFinite(val));
+          entry.mileage = fallbackMileage !== undefined ? fallbackMileage : null;
         }
+
+        entries.push(entry);
       });
 
       if (!entries.length) {
         throw new Error('No se encontraron registros válidos en la hoja.');
       }
 
-      fleetEntries = entries;
-      fleetLookup = lookup;
+      return entries;
     }
+
+    function sanitizeFleetEntries(entries) {
+      if (!Array.isArray(entries)) return [];
+      return entries.map(normalizeFleetEntry).filter(Boolean);
+    }
+
+    function normalizeFleetEntry(entry) {
+      if (!entry) return null;
+      const normalizedOrder = normalizeOrderKey(entry.normalizedOrder || entry.orderNumber || entry.mobileNumber);
+      if (!normalizedOrder) return null;
+
+      const mileageValue = parseNumeric(entry.mileage ?? entry.lastMileage ?? entry.maintenanceKm ?? entry.lastMaintenanceKm);
+      const lastMileageValue = parseNumeric(entry.lastMileage ?? entry.ultimoKilometraje ?? entry.lastMileageValue);
+      const distanceValue = parseNumeric(entry.distanceTraveled ?? entry.kmRecorrido);
+      const lastMaintenanceKmValue = parseNumeric(entry.lastMaintenanceKm ?? entry.kmUltimaMantencion);
+      const maintenanceKmValue = parseNumeric(entry.maintenanceKm ?? entry.kmsMant);
+      const remainingKmValue = parseNumeric(entry.kmRemaining ?? entry.falta);
+      const yearValue = parseNumeric(entry.year ?? entry.ano);
+
+      return {
+        orderNumber: entry.orderNumber || entry.mobileNumber || normalizedOrder,
+        normalizedOrder,
+        mobileNumber: entry.mobileNumber || entry.orderNumber || normalizedOrder,
+        plate: (entry.plate || entry.patente || '').toString().toUpperCase().trim(),
+        mileage: Number.isFinite(mileageValue) ? Math.round(mileageValue) : null,
+        typeTransport: entry.typeTransport || entry.tipoTransporte || '',
+        status: entry.status || entry.statusGeneral || '',
+        make: entry.make || entry.marca || '',
+        model: entry.model || entry.modelo || '',
+        year: Number.isFinite(yearValue) ? Math.round(yearValue) : null,
+        zone: entry.zone || entry.zonal || '',
+        lastMileage: Number.isFinite(lastMileageValue) ? Math.round(lastMileageValue) : null,
+        lastMileageDate: formatDateValue(entry.lastMileageDate || entry.fechaUltimoKilometraje || ''),
+        distanceTraveled: Number.isFinite(distanceValue) ? distanceValue : null,
+        lastMaintenanceKm: Number.isFinite(lastMaintenanceKmValue) ? lastMaintenanceKmValue : null,
+        lastMaintenanceDate: formatDateValue(entry.lastMaintenanceDate || entry.fechaUltimaMantencion || ''),
+        maintenancePlan: entry.maintenancePlan || entry.pautaUltimaMantencion || '',
+        maintenanceKm: Number.isFinite(maintenanceKmValue) ? maintenanceKmValue : null,
+        kmRemaining: Number.isFinite(remainingKmValue) ? remainingKmValue : null,
+        maintenanceStatus: entry.maintenanceStatus || entry.estadoMp || entry.estado || ''
+      };
+    }
+
+    function formatNumber(value, fallback = 'N/D') {
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        return value.toLocaleString('es-CL');
+      }
+      return fallback;
+    }
+
+    function formatKilometers(value) {
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        return `${Math.round(value).toLocaleString('es-CL')} km`;
+      }
+      return 'N/D';
+    }
+
+    function formatDateDisplay(value) {
+      const normalized = formatDateValue(value);
+      if (!normalized) return 'N/D';
+      const date = new Date(normalized);
+      if (!Number.isNaN(date.getTime())) {
+        try {
+          return date.toLocaleDateString('es-CL');
+        } catch (error) {
+          console.warn('No se pudo formatear la fecha para el dashboard:', error);
+        }
+      }
+      return normalized;
+    }
+
+    function formatDateTimeDisplay(value) {
+      if (!value) return 'fecha desconocida';
+      const normalized = formatDateValue(value);
+      const date = new Date(normalized);
+      if (!Number.isNaN(date.getTime())) {
+        try {
+          return date.toLocaleString('es-CL', { dateStyle: 'medium', timeStyle: 'short' });
+        } catch (error) {
+          console.warn('No se pudo formatear fecha y hora:', error);
+        }
+      }
+      return normalized;
+    }
+
+    function getStatusColor(status) {
+      const normalized = (status || '').toString().toLowerCase();
+      if (normalized.includes('venc') || normalized.includes('crit') || normalized.includes('rojo')) {
+        return 'rgba(220, 38, 38, 0.7)';
+      }
+      if (normalized.includes('pend') || normalized.includes('prog') || normalized.includes('amar')) {
+        return 'rgba(251, 191, 36, 0.7)';
+      }
+      if (normalized.includes('ok') || normalized.includes('vigente') || normalized.includes('verde') || normalized.includes('complet')) {
+        return 'rgba(5, 150, 105, 0.7)';
+      }
+      return 'rgba(59, 130, 246, 0.7)';
+    }
+
+    function getStatusChipClasses(status, isActive) {
+      const base = 'px-3 py-1 rounded-full text-xs font-medium transition';
+      if (isActive) {
+        return `${base} bg-primary text-white border border-primary shadow-sm`;
+      }
+      return `${base} border border-gray-300 text-gray-600 bg-white hover:border-primary hover:text-primary`;
+    }
+
+    function showFleetUploadFeedback(message, type = 'info') {
+      const container = document.getElementById('fleetUploadFeedback');
+      if (!container) return;
+      const classes = {
+        success: 'text-green-600',
+        error: 'text-red-600',
+        warning: 'text-amber-600',
+        info: 'text-gray-600'
+      };
+      container.textContent = message;
+      container.className = `mt-2 text-sm font-medium ${classes[type] || classes.info}`;
+    }
+
+    function updateFleetDatasetSummary() {
+      const container = document.getElementById('fleetDatasetStats');
+      if (!container) return;
+      if (!fleetEntries.length) {
+        container.innerHTML = `
+          <div class="p-4 border-2 border-dashed border-gray-300 bg-gray-50 rounded-lg text-sm text-gray-500">
+            Aún no cargas la planilla de flota. Usa el botón "Actualizar catálogo" para importar el Excel "${FLEET_SHEET_NAME}".
+          </div>
+        `;
+        return;
+      }
+
+      const total = fleetEntries.length;
+      const dueNow = fleetEntries.filter(entry => typeof entry.kmRemaining === 'number' && Number.isFinite(entry.kmRemaining) && entry.kmRemaining <= 0).length;
+      const dueSoon = fleetEntries.filter(entry => {
+        if (typeof entry.kmRemaining !== 'number' || !Number.isFinite(entry.kmRemaining)) return false;
+        if (entry.kmRemaining <= 0) return false;
+        return entry.kmRemaining <= DEFAULT_KM_ALERT_THRESHOLD;
+      }).length;
+      const updatedText = fleetDatasetMeta?.updatedAt ? formatDateTimeDisplay(fleetDatasetMeta.updatedAt) : 'fecha desconocida';
+      const source = fleetDatasetMeta?.sourceName || 'Importación manual';
+
+      container.innerHTML = `
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div class="p-4 bg-white border border-gray-200 rounded-lg shadow-sm">
+            <p class="text-xs uppercase text-gray-500 tracking-wide">Vehículos cargados</p>
+            <p class="text-2xl font-semibold text-gray-800 mt-1">${formatNumber(total, '0')}</p>
+          </div>
+          <div class="p-4 bg-red-50 border border-red-200 rounded-lg shadow-sm">
+            <p class="text-xs uppercase text-red-600 tracking-wide">Mantención vencida</p>
+            <p class="text-2xl font-semibold text-red-600 mt-1">${formatNumber(dueNow, '0')}</p>
+          </div>
+          <div class="p-4 bg-amber-50 border border-amber-200 rounded-lg shadow-sm">
+            <p class="text-xs uppercase text-amber-600 tracking-wide">Próximas a vencer (&le; ${DEFAULT_KM_ALERT_THRESHOLD.toLocaleString('es-CL')} km)</p>
+            <p class="text-2xl font-semibold text-amber-600 mt-1">${formatNumber(dueSoon, '0')}</p>
+          </div>
+          <div class="p-4 bg-emerald-50 border border-emerald-200 rounded-lg shadow-sm">
+            <p class="text-xs uppercase text-emerald-600 tracking-wide">Última actualización</p>
+            <p class="text-sm font-semibold text-emerald-700 mt-1 leading-tight">${updatedText}</p>
+            <p class="text-xs text-emerald-600 mt-1 truncate">${source}</p>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderDashboardDetail(entries, statusFilter = 'Todos') {
+      const body = document.getElementById('dashboardDetailBody');
+      if (!body) return;
+      if (!Array.isArray(entries) || !entries.length) {
+        body.innerHTML = '<tr><td colspan="5" class="px-2 py-4 text-center text-sm text-gray-500">Carga la planilla de flota para ver el detalle.</td></tr>';
+        return;
+      }
+
+      const filtered = entries.filter(entry => {
+        const status = (entry.maintenanceStatus || entry.status || 'Sin estado').toString().trim() || 'Sin estado';
+        if (statusFilter === 'Todos') return true;
+        return status.toLowerCase() === statusFilter.toLowerCase();
+      });
+
+      const sorted = filtered
+        .map(entry => ({
+          ...entry,
+          kmRemainingValue: typeof entry.kmRemaining === 'number' && Number.isFinite(entry.kmRemaining) ? entry.kmRemaining : null
+        }))
+        .sort((a, b) => {
+          const aValue = a.kmRemainingValue !== null ? a.kmRemainingValue : Number.POSITIVE_INFINITY;
+          const bValue = b.kmRemainingValue !== null ? b.kmRemainingValue : Number.POSITIVE_INFINITY;
+          return aValue - bValue;
+        })
+        .slice(0, 12);
+
+      if (!sorted.length) {
+        body.innerHTML = '<tr><td colspan="5" class="px-2 py-4 text-center text-sm text-gray-500">No hay vehículos en este filtro.</td></tr>';
+        return;
+      }
+
+      body.innerHTML = sorted.map(entry => {
+        const kmClass = entry.kmRemainingValue !== null && entry.kmRemainingValue <= 0 ? 'text-red-600 font-semibold' : 'text-gray-700';
+        const statusText = (entry.maintenanceStatus || entry.status || 'Sin estado') || 'Sin estado';
+        return `
+          <tr class="border-b last:border-0">
+            <td class="px-2 py-2 font-semibold text-gray-800">${entry.orderNumber}</td>
+            <td class="px-2 py-2 text-gray-600">${entry.plate || 'N/D'}</td>
+            <td class="px-2 py-2 ${kmClass}">${formatKilometers(entry.kmRemainingValue)}</td>
+            <td class="px-2 py-2 text-gray-600">${statusText}</td>
+            <td class="px-2 py-2 text-gray-500">${formatDateDisplay(entry.lastMaintenanceDate)}</td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    function renderFleetDashboard(entries = fleetEntries) {
+      const emptyState = document.getElementById('dashboardEmptyState');
+      const content = document.getElementById('dashboardContent');
+      const summary = document.getElementById('dashboardSummary');
+      const updatedAtEl = document.getElementById('dashboardUpdatedAt');
+      const statusFilters = document.getElementById('dashboardStatusFilters');
+
+      dashboardCachedEntries = Array.isArray(entries) ? entries : [];
+
+      if (!emptyState || !content) return;
+      if (!dashboardCachedEntries.length) {
+        dashboardStatusFilter = 'Todos';
+        emptyState.classList.remove('hidden');
+        content.classList.add('hidden');
+        if (updatedAtEl) updatedAtEl.textContent = '';
+        if (maintenanceStatusChart) {
+          maintenanceStatusChart.destroy();
+          maintenanceStatusChart = null;
+        }
+        return;
+      }
+
+      emptyState.classList.add('hidden');
+      content.classList.remove('hidden');
+
+      if (updatedAtEl) {
+        updatedAtEl.textContent = fleetDatasetMeta?.updatedAt ? `Actualizado: ${formatDateTimeDisplay(fleetDatasetMeta.updatedAt)}` : '';
+      }
+
+      const kmRemainingValues = dashboardCachedEntries
+        .map(entry => (typeof entry.kmRemaining === 'number' && Number.isFinite(entry.kmRemaining)) ? entry.kmRemaining : null)
+        .filter(value => value !== null);
+      const dueNow = kmRemainingValues.filter(value => value <= 0).length;
+      const dueSoon = kmRemainingValues.filter(value => value > 0 && value <= DEFAULT_KM_ALERT_THRESHOLD).length;
+      const averageMileageValues = dashboardCachedEntries
+        .map(entry => {
+          if (typeof entry.lastMileage === 'number' && Number.isFinite(entry.lastMileage)) return entry.lastMileage;
+          if (typeof entry.mileage === 'number' && Number.isFinite(entry.mileage)) return entry.mileage;
+          return null;
+        })
+        .filter(value => value !== null);
+      const averageMileage = averageMileageValues.length
+        ? Math.round(averageMileageValues.reduce((sum, value) => sum + value, 0) / averageMileageValues.length)
+        : null;
+
+      if (summary) {
+        summary.innerHTML = `
+          <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div class="p-4 bg-primary/10 border border-primary/30 rounded-lg">
+              <p class="text-xs uppercase text-primary tracking-wide font-semibold">Vehículos registrados</p>
+              <p class="text-3xl font-bold text-primary mt-2">${formatNumber(dashboardCachedEntries.length, '0')}</p>
+            </div>
+            <div class="p-4 bg-red-50 border border-red-200 rounded-lg">
+              <p class="text-xs uppercase text-red-600 tracking-wide font-semibold">Mantención vencida</p>
+              <p class="text-3xl font-bold text-red-600 mt-2">${formatNumber(dueNow, '0')}</p>
+            </div>
+            <div class="p-4 bg-amber-50 border border-amber-200 rounded-lg">
+              <p class="text-xs uppercase text-amber-600 tracking-wide font-semibold">Próximas (&le; ${DEFAULT_KM_ALERT_THRESHOLD.toLocaleString('es-CL')} km)</p>
+              <p class="text-3xl font-bold text-amber-600 mt-2">${formatNumber(dueSoon, '0')}</p>
+            </div>
+            <div class="p-4 bg-emerald-50 border border-emerald-200 rounded-lg">
+              <p class="text-xs uppercase text-emerald-600 tracking-wide font-semibold">Kilometraje promedio</p>
+              <p class="text-3xl font-bold text-emerald-600 mt-2">${averageMileage !== null ? formatNumber(averageMileage, '0') + ' km' : 'N/D'}</p>
+            </div>
+          </div>
+        `;
+      }
+
+      const statusCounts = dashboardCachedEntries.reduce((acc, entry) => {
+        const status = (entry.maintenanceStatus || entry.status || 'Sin estado').toString().trim() || 'Sin estado';
+        acc[status] = (acc[status] || 0) + 1;
+        return acc;
+      }, {});
+      const statuses = Object.keys(statusCounts).sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
+      if (!statuses.includes(dashboardStatusFilter)) {
+        dashboardStatusFilter = 'Todos';
+      }
+
+      if (statusFilters) {
+        statusFilters.innerHTML = '';
+        const buildButton = (label, value, count) => {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = getStatusChipClasses(value, dashboardStatusFilter === value);
+          button.textContent = `${label} (${formatNumber(count, '0')})`;
+          button.addEventListener('click', () => {
+            dashboardStatusFilter = value;
+            renderFleetDashboard(dashboardCachedEntries);
+          });
+          statusFilters.appendChild(button);
+        };
+        buildButton('Todos', 'Todos', dashboardCachedEntries.length);
+        statuses.forEach(status => buildButton(status, status, statusCounts[status]));
+      }
+
+      const chartCanvas = document.getElementById('maintenanceStatusChart');
+      if (chartCanvas && typeof window.Chart !== 'undefined') {
+        if (maintenanceStatusChart) {
+          maintenanceStatusChart.destroy();
+          maintenanceStatusChart = null;
+        }
+        const ctx = chartCanvas.getContext('2d');
+        maintenanceStatusChart = new window.Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels: statuses,
+            datasets: [{
+              label: 'Vehículos',
+              data: statuses.map(status => statusCounts[status] || 0),
+              backgroundColor: statuses.map(getStatusColor),
+              borderRadius: 8
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+              y: {
+                beginAtZero: true,
+                ticks: {
+                  precision: 0
+                }
+              }
+            },
+            plugins: {
+              legend: { display: false }
+            }
+          }
+        });
+      }
+
+      renderDashboardDetail(dashboardCachedEntries, dashboardStatusFilter);
+    }
+
+    async function handleFleetFileSelection(event) {
+      const input = event.target;
+      const file = input?.files?.[0];
+      if (!file) return;
+
+      showFleetUploadFeedback(`Procesando "${file.name}"...`, 'info');
+      showAdminFeedback(`Procesando archivo "${file.name}"...`, 'info');
+
+      try {
+        const extension = file.name.split('.').pop().toLowerCase();
+        if (!['xlsx', 'xls', 'xlsm'].includes(extension)) {
+          throw new Error('Selecciona un archivo Excel (.xlsx o .xls).');
+        }
+
+        const arrayBuffer = await file.arrayBuffer();
+        const entries = parseFleetWorkbook(arrayBuffer);
+        const meta = { sourceName: file.name, updatedAt: new Date().toISOString() };
+        applyFleetDataset(entries, { meta });
+        showAdminFeedback(`Catálogo actualizado con ${entries.length} vehículos desde "${file.name}".`, 'success');
+        showFleetUploadFeedback('Catálogo de flota actualizado correctamente.', 'success');
+        displayAppMessage('Planilla de flota actualizada correctamente.', 'success');
+      } catch (error) {
+        console.error('Error al procesar el archivo de flota:', error);
+        const message = error?.message || 'No se pudo procesar el archivo de flota.';
+        showAdminFeedback(message, 'error');
+        showFleetUploadFeedback(message, 'error');
+        displayAppMessage('No se pudo procesar el archivo de flota.', 'error');
+      } finally {
+        if (input) {
+          input.value = '';
+        }
+      }
+    }
+
+    function requestFleetUpload() {
+      document.getElementById('fleetFileInput')?.click();
+    }
+
+    function handleClearFleetDataset() {
+      if (!window.confirm('¿Eliminar el catálogo de flota almacenado en este navegador?')) {
+        return;
+      }
+      clearFleetDatasetStorage();
+      fleetEntries = [];
+      fleetLookup = new Map();
+      fleetDatasetMeta = null;
+      dashboardCachedEntries = [];
+      dashboardStatusFilter = 'Todos';
+      refreshOrderDatalist();
+      setOrderInputState('error', 'Sube la planilla de flota desde la pestaña Catálogo.');
+      updateFleetDatasetSummary();
+      renderFleetDashboard([]);
+      resetOrderAutofill();
+      showAdminFeedback('Catálogo local eliminado. Carga una nueva planilla para continuar.', 'info');
+      showFleetUploadFeedback('Catálogo eliminado de este navegador.', 'info');
+      displayAppMessage('Catálogo de flota eliminado correctamente.', 'info');
+    }
+
+    window.requestFleetUpload = requestFleetUpload;
+    window.clearFleetDataset = handleClearFleetDataset;
 
     function compareOrderNumbers(a, b) {
       const valueA = normalizeOrderKey(a);
@@ -1796,8 +2404,12 @@
       loadCatalogFromStorage();
       renderCatalogLists();
       attachOrderNumberHandlers();
-      setOrderInputState('loading');
       loadFleetDataset();
+
+      const fleetFileInput = document.getElementById('fleetFileInput');
+      if (fleetFileInput) {
+        fleetFileInput.addEventListener('change', handleFleetFileSelection);
+      }
 
       initializeAppCore().then(() => {
         const branchSelect = document.getElementById('branchName');
@@ -1806,6 +2418,9 @@
         }
 
         refreshCatalogSelects();
+
+        updateFleetDatasetSummary();
+        renderFleetDashboard(fleetEntries);
 
         const exportMenuButton = document.getElementById('exportMenuButton');
         const exportMenu = document.getElementById('exportMenu');
@@ -1999,6 +2614,29 @@
             <div id="customSizeList" class="flex flex-wrap gap-2"></div>
           </div>
           <p class="mt-6 text-xs text-gray-400">Los datos se almacenan localmente en este navegador. Exporta la lista si deseas respaldarla.</p>
+          <div class="mt-10 border-t border-dashed border-gray-200 pt-6">
+            <div class="flex items-center justify-between flex-wrap gap-2">
+              <h3 class="text-lg font-semibold text-gray-700">Catálogo de flota (Excel)</h3>
+              <span class="text-xs font-medium text-gray-500">Solo visible para el creador</span>
+            </div>
+            <p class="text-sm text-gray-600 mt-2">
+              Importa el archivo actualizado con las columnas <strong>Tipo de Transporte, Status, N° de Movil, Patente, Marca, Modelo, Año, Zonal, Último kilometraje, Fecha Último kilometraje, Km. Recorrido, Km. última Mantención, Fecha última Mantención, Pauta última Mantención, Kms de Mant., Falta y Estado MP</strong>.
+              El sistema validará la hoja <em>"Flota Verschae"</em> y actualizará los datos disponibles en el formulario y en el dashboard.
+            </p>
+            <div class="mt-4 flex flex-wrap items-center gap-3">
+              <button type="button" onclick="requestFleetUpload()" class="px-4 py-2 bg-primary text-white text-sm font-semibold rounded-lg shadow-sm hover:bg-secondary transition">
+                Actualizar catálogo
+              </button>
+              <button type="button" onclick="clearFleetDataset()" class="px-4 py-2 bg-red-100 text-red-600 text-sm font-semibold rounded-lg shadow-sm hover:bg-red-200 transition">
+                Eliminar catálogo local
+              </button>
+            </div>
+            <input type="file" id="fleetFileInput" accept=".xlsx,.xls,.xlsm" class="hidden" />
+            <p id="fleetUploadFeedback" class="mt-2 text-sm text-gray-500">
+              Aún no se ha cargado un catálogo. Usa "Actualizar catálogo" para seleccionar el Excel de flota.
+            </p>
+            <div id="fleetDatasetStats" class="mt-6"></div>
+          </div>
         </div>
       </div>
 
@@ -2087,6 +2725,51 @@
             </table>
         </div>
       </div>
+
+      <section id="dashboardSection" class="mt-16">
+        <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+          <div class="flex flex-wrap items-start justify-between gap-4">
+            <h2 class="text-2xl font-bold text-gray-800">Dashboard de Mantenciones Preventivas</h2>
+            <span id="dashboardUpdatedAt" class="text-sm text-gray-500"></span>
+          </div>
+          <p class="text-sm text-gray-600 mt-2">Los indicadores se actualizan con el último Excel cargado desde el catálogo privado.</p>
+          <div id="dashboardEmptyState" class="mt-6 p-6 bg-gray-50 border border-dashed border-gray-300 rounded-lg text-sm text-gray-500">
+            Aún no hay datos cargados. Importa la planilla de flota para visualizar el estado de las mantenciones.
+          </div>
+          <div id="dashboardContent" class="mt-6 hidden">
+            <div id="dashboardSummary"></div>
+            <div class="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div class="bg-white border border-gray-200 rounded-lg shadow-sm p-4">
+                <div class="flex items-center justify-between gap-4">
+                  <h3 class="text-lg font-semibold text-gray-700">Estado de mantención</h3>
+                  <div id="dashboardStatusFilters" class="flex flex-wrap gap-2"></div>
+                </div>
+                <div class="mt-4 h-64">
+                  <canvas id="maintenanceStatusChart"></canvas>
+                </div>
+              </div>
+              <div class="bg-white border border-gray-200 rounded-lg shadow-sm p-4">
+                <h3 class="text-lg font-semibold text-gray-700">Prioridad de intervención</h3>
+                <p class="text-xs text-gray-500 mb-4">Ordenado por kilómetros restantes para la próxima mantención preventiva.</p>
+                <div class="overflow-y-auto max-h-72">
+                  <table class="min-w-full text-sm">
+                    <thead>
+                      <tr class="text-left text-xs uppercase tracking-wide text-gray-500 border-b">
+                        <th class="px-2 py-2">Orden</th>
+                        <th class="px-2 py-2">Patente</th>
+                        <th class="px-2 py-2">Falta</th>
+                        <th class="px-2 py-2">Estado</th>
+                        <th class="px-2 py-2">Última Mantención</th>
+                      </tr>
+                    </thead>
+                    <tbody id="dashboardDetailBody"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
 
     </main>
   </div>
