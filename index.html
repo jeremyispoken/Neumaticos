@@ -85,10 +85,9 @@
     const PREDEFINED_MODELS = [
       'Michelin X Multiway 3D XZE', 'Pirelli FH:01 Energy', 'Bridgestone R260', 'Dunlop SP338', 'Goodyear KMAX S', 'Continental HT3', 'Hankook SmartFlex AH31', 'Westlake CB867', 'Sailun S701'
     ];
-    const PREDEFINED_SIZES = ['225/75R16', '245/70R19.5', '275/80R22.5', '295/80R22.5', '315/80R22.5', '11R22.5', '12R22.5', '10.00R20'];
+    const PREDEFINED_SIZES = ['225/75R16', '215/75R16', '275/80R22.5'];
     const FLEET_SHARE_ID = 'u!aHR0cHM6Ly8xZHJ2Lm1zL3gvYy80ZTllNTI1OTI0MGMzNzFiL0VSczNEQ1JaVXA0Z2dFNlJBQUFBQUFBQlRScUl1ZGJRRXRWUDN3akdkSVkxbXc_ZT13Z0tvUTk';
-    const FLEET_ONEDRIVE_URL = `https://api.onedrive.com/v1.0/shares/${FLEET_SHARE_ID}/root/content`;
-    const FLEET_GITHUB_FALLBACK_URL = 'https://raw.githubusercontent.com/jeremyispoken/Neumaticos/4964bf87b8cf5f423cc3e55eed17951b4e8dc36d/DATAVEHICULOS';
+    const FLEET_DOWNLOAD_URL = `https://api.onedrive.com/v1.0/shares/${FLEET_SHARE_ID}/root/content`;
     const FLEET_SHEET_NAME = 'Flota Verschae';
     const ORDER_KEYWORDS = ['orden', 'n° orden', 'nº orden', 'numero orden', 'orden vehículo', 'orden vehiculo'];
     const MOBILE_KEYWORDS = ['móvil', 'movil', 'n° movil', 'nº movil', 'nro movil', 'numero movil'];
@@ -421,11 +420,18 @@
     }
 
     async function loadFleetDataset() {
+      if (typeof XLSX === 'undefined') {
+        console.warn('La librería XLSX no está disponible.');
+        return;
+      }
       setOrderInputState('loading');
       try {
-        const { entries, lookup } = await fetchFleetDataset();
-        fleetEntries = entries;
-        fleetLookup = lookup;
+        const response = await fetch(FLEET_DOWNLOAD_URL, { cache: 'no-store', mode: 'cors' });
+        if (!response.ok) {
+          throw new Error(`Error ${response.status} al obtener la planilla`);
+        }
+        const arrayBuffer = await response.arrayBuffer();
+        parseFleetWorkbook(arrayBuffer);
         setOrderInputState('ready');
         refreshOrderDatalist();
         handleOrderNumberInput();
@@ -437,72 +443,6 @@
       }
     }
 
-    async function fetchFleetDataset() {
-      const hasSpreadsheetParser = typeof XLSX !== 'undefined';
-      const errors = [];
-
-      // 1) Intento directo a OneDrive (fuente original)
-      if (hasSpreadsheetParser) {
-        try {
-          const arrayBuffer = await fetchAsArrayBuffer(FLEET_ONEDRIVE_URL);
-          return parseFleetWorkbook(arrayBuffer);
-        } catch (error) {
-          errors.push(error);
-          console.warn('Fallo al descargar desde OneDrive, intentando respaldo GitHub…', error);
-        }
-      } else {
-        errors.push(new Error('XLSX no disponible para leer la planilla de OneDrive.'));
-      }
-
-      // 2) Respaldo en GitHub (permite actualizar manualmente el dataset)
-      try {
-        const response = await fetch(FLEET_GITHUB_FALLBACK_URL, { cache: 'no-store', mode: 'cors' });
-        if (!response.ok) {
-          throw new Error(`Error ${response.status} al obtener el respaldo de GitHub`);
-        }
-
-        const contentType = (response.headers.get('content-type') || '').toLowerCase();
-        if (hasSpreadsheetParser && (contentType.includes('spreadsheetml') || contentType.includes('application/octet-stream'))) {
-          const arrayBuffer = await response.arrayBuffer();
-          return parseFleetWorkbook(arrayBuffer);
-        }
-
-        const textPayload = await response.text();
-        const trimmed = textPayload.trim();
-
-        if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-          const json = JSON.parse(trimmed);
-          return parseFleetJson(json);
-        }
-
-        if (trimmed.startsWith('http')) {
-          // El archivo de respaldo puede contener un enlace actualizado.
-          if (hasSpreadsheetParser) {
-            const arrayBuffer = await fetchAsArrayBuffer(trimmed);
-            return parseFleetWorkbook(arrayBuffer);
-          }
-          throw new Error('Se requiere XLSX para leer el enlace alternativo de la planilla.');
-        }
-
-        return parseFleetCsv(trimmed);
-      } catch (error) {
-        errors.push(error);
-        console.error('Fallo al usar el respaldo GitHub:', error);
-      }
-
-      const combinedError = new Error(errors.map(err => err?.message || String(err)).join(' | '));
-      combinedError.details = errors;
-      throw combinedError;
-    }
-
-    async function fetchAsArrayBuffer(url) {
-      const response = await fetch(url, { cache: 'no-store', mode: 'cors' });
-      if (!response.ok) {
-        throw new Error(`Error ${response.status} al obtener ${url}`);
-      }
-      return response.arrayBuffer();
-    }
-
     function parseFleetWorkbook(arrayBuffer) {
       const workbook = XLSX.read(arrayBuffer, { type: 'array' });
       const sheet = workbook.Sheets[FLEET_SHEET_NAME];
@@ -510,65 +450,14 @@
         throw new Error(`La hoja "${FLEET_SHEET_NAME}" no existe en el archivo.`);
       }
       const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
-      return buildFleetEntriesFromRows(rows);
-    }
-
-    function parseFleetJson(jsonPayload) {
-      if (!Array.isArray(jsonPayload)) {
-        throw new Error('El respaldo JSON de flota debe ser un arreglo.');
-      }
-      const entries = [];
-      const lookup = new Map();
-      jsonPayload.forEach((item) => {
-        if (!item) return;
-        const displayOrder = item.orderNumber || item.orden || item.order || '';
-        const normalizedOrder = normalizeOrderKey(displayOrder || item.mobile || item.movil);
-        if (!normalizedOrder) return;
-        const plate = String(item.plate || item.patente || '').toUpperCase().trim();
-        const mileageValue = item.mileage ?? item.kilometraje ?? item.km ?? null;
-        const mileage = mileageValue === null || mileageValue === undefined ? null : parseInt(String(mileageValue).replace(/[^0-9]/g, ''), 10);
-        const entry = {
-          orderNumber: displayOrder || normalizedOrder,
-          normalizedOrder,
-          plate,
-          mileage: Number.isFinite(mileage) ? mileage : null
-        };
-        entries.push(entry);
-        if (!lookup.has(normalizedOrder)) {
-          lookup.set(normalizedOrder, entry);
-        }
-      });
-      if (!entries.length) {
-        throw new Error('El respaldo JSON no contiene registros válidos.');
-      }
-      return { entries, lookup };
-    }
-
-    function parseFleetCsv(textPayload) {
-      const rows = textPayload.split(/\r?\n/).map(row => row.split(/\s*[,;\t]\s*/));
-      return buildFleetEntriesFromRows(rows);
-    }
-
-    function buildFleetEntriesFromRows(rows) {
       if (!rows.length) {
         throw new Error('La hoja seleccionada está vacía.');
       }
       const headers = rows[0];
-      const maxColumns = rows.reduce((max, row) => Array.isArray(row) ? Math.max(max, row.length) : max, Array.isArray(headers) ? headers.length : 0);
-      const clampIndex = (candidate, fallbackPreference) => {
-        if (typeof candidate === 'number' && candidate >= 0 && candidate < maxColumns) {
-          return candidate;
-        }
-        const adjusted = typeof fallbackPreference === 'number' ? fallbackPreference : 0;
-        if (maxColumns === 0) return 0;
-        if (adjusted >= 0 && adjusted < maxColumns) return adjusted;
-        return Math.max(0, Math.min(maxColumns - 1, adjusted));
-      };
-
-      const orderIndex = clampIndex(findColumnIndex(headers, ORDER_KEYWORDS, FLEET_FALLBACK_INDEX.order), 0);
-      const mobileIndex = clampIndex(findColumnIndex(headers, MOBILE_KEYWORDS, FLEET_FALLBACK_INDEX.mobile), orderIndex);
-      const plateIndex = clampIndex(findColumnIndex(headers, PLATE_KEYWORDS, FLEET_FALLBACK_INDEX.plate), Math.min(1, maxColumns - 1));
-      const mileageIndex = clampIndex(findColumnIndex(headers, MILEAGE_KEYWORDS, FLEET_FALLBACK_INDEX.mileage), Math.min(2, maxColumns - 1));
+      const orderIndex = findColumnIndex(headers, ORDER_KEYWORDS, FLEET_FALLBACK_INDEX.order);
+      const mobileIndex = findColumnIndex(headers, MOBILE_KEYWORDS, FLEET_FALLBACK_INDEX.mobile);
+      const plateIndex = findColumnIndex(headers, PLATE_KEYWORDS, FLEET_FALLBACK_INDEX.plate);
+      const mileageIndex = findColumnIndex(headers, MILEAGE_KEYWORDS, FLEET_FALLBACK_INDEX.mileage);
 
       const entries = [];
       const lookup = new Map();
@@ -582,7 +471,7 @@
         if (!normalizedOrder) return;
         const plate = safeCellValue(row, plateIndex).toUpperCase();
         const mileageValue = safeCellValue(row, mileageIndex);
-        const mileage = mileageValue ? parseInt(String(mileageValue).replace(/[^0-9]/g, ''), 10) : null;
+        const mileage = mileageValue ? parseInt(mileageValue.replace(/[^0-9]/g, ''), 10) : null;
         const entry = {
           orderNumber: displayOrder || normalizedOrder,
           normalizedOrder,
@@ -599,7 +488,8 @@
         throw new Error('No se encontraron registros válidos en la hoja.');
       }
 
-      return { entries, lookup };
+      fleetEntries = entries;
+      fleetLookup = lookup;
     }
 
     function compareOrderNumbers(a, b) {
