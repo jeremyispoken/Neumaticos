@@ -45,6 +45,19 @@
         border-color: #059669;
         box-shadow: 0 0 0 2px rgba(5, 150, 105, 0.2);
     }
+    .input-valid {
+        border-color: #059669 !important;
+        box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.15) !important;
+    }
+    .input-invalid {
+        border-color: #dc2626 !important;
+        box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.2) !important;
+    }
+    .readonly-input {
+        background-color: #f3f4f6;
+        color: #4b5563;
+        cursor: not-allowed;
+    }
   </style>
 
   <!-- Librerías para generar PDF y Excel -->
@@ -73,6 +86,22 @@
       'Michelin X Multiway 3D XZE', 'Pirelli FH:01 Energy', 'Bridgestone R260', 'Dunlop SP338', 'Goodyear KMAX S', 'Continental HT3', 'Hankook SmartFlex AH31', 'Westlake CB867', 'Sailun S701'
     ];
     const PREDEFINED_SIZES = ['225/75R16', '245/70R19.5', '275/80R22.5', '295/80R22.5', '315/80R22.5', '11R22.5', '12R22.5', '10.00R20'];
+    const FLEET_SHARE_ID = 'u!aHR0cHM6Ly8xZHJ2Lm1zL3gvYy80ZTllNTI1OTI0MGMzNzFiL0VSczNEQ1JaVXA0Z2dFNlJBQUFBQUFBQlRScUl1ZGJRRXRWUDN3akdkSVkxbXc_ZT13Z0tvUTk';
+    const FLEET_GRAPH_CONTENT_URL = `https://graph.microsoft.com/v1.0/shares/${FLEET_SHARE_ID}/driveItem/content`;
+    const FLEET_GITHUB_FALLBACK_URL = 'https://raw.githubusercontent.com/jeremyispoken/Neumaticos/4964bf87b8cf5f423cc3e55eed17951b4e8dc36d/DATAVEHICULOS';
+    const FLEET_SHEET_NAME = 'Flota Verschae';
+    const ORDER_KEYWORDS = ['orden', 'n° orden', 'nº orden', 'numero orden', 'orden vehículo', 'orden vehiculo'];
+    const MOBILE_KEYWORDS = ['móvil', 'movil', 'n° movil', 'nº movil', 'nro movil', 'numero movil'];
+    const PLATE_KEYWORDS = ['patente', 'placa', 'matricula'];
+    const MILEAGE_KEYWORDS = ['kilometraje', 'km', 'kilometros', 'kilómetros', 'odometro', 'odómetro'];
+    const FLEET_FALLBACK_INDEX = { order: 2, mobile: 2, plate: 3, mileage: 13 };
+    const CATALOG_STORAGE_KEY = 'flota-track-catalog';
+    const ONEDRIVE_TOKEN_ENDPOINT = 'https://login.microsoftonline.com/consumers/oauth2/v2.0/token';
+    const ONEDRIVE_CLIENT_ID = '04b07795-8ddb-461a-bbee-02f9e1bf7b46';
+    const ONEDRIVE_SCOPE = 'https://graph.microsoft.com/.default offline_access';
+    const ONEDRIVE_USERNAME = 'verschae@outlook.com';
+    const ONEDRIVE_PASSWORD = 'Berlioz5761';
+    const ONEDRIVE_SESSION_STORAGE_KEY = 'flota-track-onedrive-session';
     const longevityTips = [
       "Mantén la <strong>presión correcta</strong> semanalmente. La subinflación es el principal asesino de neumáticos.",
       "Realiza la <strong>rotación</strong> cada 10–12 mil km para asegurar un desgaste uniforme.",
@@ -91,6 +120,643 @@
     let unsubscribeRecords = null;
     window.currentRecords = [];
     window.pendingReviewData = null;
+    let fleetLookup = new Map();
+    let fleetEntries = [];
+    let fleetLoadStatus = 'idle';
+    let fleetLoadError = '';
+    let customModels = [];
+    let customSizes = [];
+    let onedriveSession = restoreOneDriveSession();
+    let onedriveAuthPromise = null;
+
+    function normalizeOrderKey(value) {
+      if (value === null || value === undefined) return '';
+      return String(value).trim().toUpperCase().replace(/\s+/g, '');
+    }
+
+    function findColumnIndex(headers, keywords, fallbackIndex) {
+      if (!Array.isArray(headers)) return fallbackIndex;
+      const index = headers.findIndex((header) => {
+        const normalizedHeader = String(header || '').trim().toLowerCase();
+        return keywords.some(keyword => normalizedHeader.includes(keyword));
+      });
+      return index !== -1 ? index : fallbackIndex;
+    }
+
+    function safeCellValue(row, index) {
+      if (!Array.isArray(row) || typeof index !== 'number' || index < 0) return '';
+      if (index >= row.length) return '';
+      const value = row[index];
+      if (value === null || value === undefined) return '';
+      return String(value).trim();
+    }
+
+    function restoreOneDriveSession() {
+      const defaultSession = { accessToken: '', refreshToken: '', expiresAt: 0 };
+      try {
+        const stored = sessionStorage.getItem(ONEDRIVE_SESSION_STORAGE_KEY);
+        if (!stored) return { ...defaultSession };
+        const parsed = JSON.parse(stored);
+        return {
+          accessToken: typeof parsed.accessToken === 'string' ? parsed.accessToken : '',
+          refreshToken: typeof parsed.refreshToken === 'string' ? parsed.refreshToken : '',
+          expiresAt: typeof parsed.expiresAt === 'number' ? parsed.expiresAt : 0,
+        };
+      } catch (error) {
+        console.warn('No se pudo restaurar la sesión de OneDrive almacenada:', error);
+        return { ...defaultSession };
+      }
+    }
+
+    function persistOneDriveSession(session) {
+      try {
+        sessionStorage.setItem(ONEDRIVE_SESSION_STORAGE_KEY, JSON.stringify(session));
+      } catch (error) {
+        console.warn('No se pudo persistir la sesión de OneDrive:', error);
+      }
+    }
+
+    function clearOneDriveSession() {
+      onedriveSession = { accessToken: '', refreshToken: '', expiresAt: 0 };
+      persistOneDriveSession(onedriveSession);
+    }
+
+    async function ensureOneDriveAccessToken({ forceRefresh = false } = {}) {
+      const now = Date.now();
+      if (!forceRefresh && onedriveSession.accessToken && now < (onedriveSession.expiresAt - 60000)) {
+        return onedriveSession.accessToken;
+      }
+
+      if (onedriveAuthPromise) {
+        return onedriveAuthPromise;
+      }
+
+      onedriveAuthPromise = (async () => {
+        if (!forceRefresh && onedriveSession.refreshToken) {
+          try {
+            return await requestOneDriveToken({ grantType: 'refresh_token', refreshToken: onedriveSession.refreshToken });
+          } catch (error) {
+            console.warn('No se pudo refrescar el token de OneDrive:', error);
+          }
+        }
+        return await requestOneDriveToken({ grantType: 'password' });
+      })()
+        .catch((error) => {
+          clearOneDriveSession();
+          throw error;
+        })
+        .finally(() => {
+          onedriveAuthPromise = null;
+        });
+
+      return onedriveAuthPromise;
+    }
+
+    async function requestOneDriveToken({ grantType, refreshToken }) {
+      const params = new URLSearchParams({
+        client_id: ONEDRIVE_CLIENT_ID,
+        scope: ONEDRIVE_SCOPE,
+      });
+
+      if (grantType === 'refresh_token') {
+        params.set('grant_type', 'refresh_token');
+        params.set('refresh_token', refreshToken || '');
+      } else {
+        params.set('grant_type', 'password');
+        params.set('username', ONEDRIVE_USERNAME);
+        params.set('password', ONEDRIVE_PASSWORD);
+      }
+
+      const response = await fetch(ONEDRIVE_TOKEN_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: params,
+        cache: 'no-store',
+        credentials: 'omit',
+      });
+
+      if (!response.ok) {
+        throw new Error(`Error ${response.status} al autenticar en OneDrive.`);
+      }
+
+      const payload = await response.json();
+      if (!payload.access_token) {
+        throw new Error('La autenticación de OneDrive no devolvió un access_token.');
+      }
+
+      const expiresIn = Number(payload.expires_in) || 3600;
+      onedriveSession = {
+        accessToken: payload.access_token,
+        refreshToken: typeof payload.refresh_token === 'string' ? payload.refresh_token : (refreshToken || ''),
+        expiresAt: Date.now() + Math.max(60, expiresIn - 60) * 1000,
+      };
+      persistOneDriveSession(onedriveSession);
+      return onedriveSession.accessToken;
+    }
+
+    function loadCatalogFromStorage() {
+      try {
+        const stored = localStorage.getItem(CATALOG_STORAGE_KEY);
+        if (!stored) return;
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed.models)) customModels = parsed.models.filter(Boolean);
+        if (Array.isArray(parsed.sizes)) customSizes = parsed.sizes.filter(Boolean);
+      } catch (error) {
+        console.warn('No se pudo cargar el catálogo personalizado:', error);
+        customModels = [];
+        customSizes = [];
+      }
+    }
+
+    function saveCatalogToStorage() {
+      const payload = {
+        models: customModels.filter(Boolean),
+        sizes: customSizes.filter(Boolean)
+      };
+      try {
+        localStorage.setItem(CATALOG_STORAGE_KEY, JSON.stringify(payload));
+      } catch (error) {
+        console.warn('No se pudo guardar el catálogo personalizado:', error);
+      }
+    }
+
+    function getAvailableMakeModels() {
+      return Array.from(new Set([...PREDEFINED_MODELS, ...customModels.filter(Boolean)])).sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
+    }
+
+    function getAvailableTireSizes() {
+      return Array.from(new Set([...PREDEFINED_SIZES, ...customSizes.filter(Boolean)])).sort((a, b) => a.localeCompare(b, 'es', { numeric: true, sensitivity: 'base' }));
+    }
+
+    function getMakeModelOptionsMarkup() {
+      return getAvailableMakeModels().map((model) => `<option value="${model}">${model}</option>`).join('');
+    }
+
+    function refreshCatalogSelects() {
+      const makeModelSelect = document.getElementById('makeModel');
+      if (makeModelSelect) {
+        const previous = makeModelSelect.value;
+        makeModelSelect.innerHTML = '<option value="" disabled selected>Selecciona una marca...</option>' + getMakeModelOptionsMarkup();
+        if (previous && getAvailableMakeModels().includes(previous)) {
+          makeModelSelect.value = previous;
+        }
+      }
+
+      const tireSizeSelect = document.getElementById('tireSize');
+      if (tireSizeSelect) {
+        const previousSize = tireSizeSelect.value;
+        tireSizeSelect.innerHTML = '<option value="" disabled selected>Selecciona una medida...</option>' + getAvailableTireSizes().map((size) => `<option value="${size}">${size}</option>`).join('');
+        if (previousSize && getAvailableTireSizes().includes(previousSize)) {
+          tireSizeSelect.value = previousSize;
+        }
+      }
+
+      updatePerTireModelSelects();
+    }
+
+    function updatePerTireModelSelects() {
+      const optionsMarkup = getMakeModelOptionsMarkup();
+      document.querySelectorAll('select[id^="tireMakeModel-"]').forEach((select) => {
+        const previous = select.value;
+        select.innerHTML = '<option value="" selected>Usar marca general del formulario</option>' + optionsMarkup;
+        if (previous && getAvailableMakeModels().includes(previous)) {
+          select.value = previous;
+        }
+      });
+    }
+
+    function renderCatalogLists() {
+      const modelList = document.getElementById('customModelList');
+      if (modelList) {
+        if (customModels.length === 0) {
+          modelList.innerHTML = '<p class="text-sm text-gray-500">Aún no registras modelos personalizados.</p>';
+        }
+        else {
+          modelList.innerHTML = customModels.map((item) => `<span class="px-3 py-1 bg-primary/10 text-primary rounded-full text-xs font-semibold">${item}</span>`).join(' ');
+        }
+      }
+      const sizeList = document.getElementById('customSizeList');
+      if (sizeList) {
+        if (customSizes.length === 0) {
+          sizeList.innerHTML = '<p class="text-sm text-gray-500">Aún no registras medidas personalizadas.</p>';
+        }
+        else {
+          sizeList.innerHTML = customSizes.map((item) => `<span class="px-3 py-1 bg-secondary/10 text-secondary rounded-full text-xs font-semibold">${item}</span>`).join(' ');
+        }
+      }
+    }
+
+    function showAdminFeedback(message, type = 'info') {
+      const container = document.getElementById('adminFeedback');
+      if (!container) return;
+      const typeClasses = {
+        success: 'text-green-600',
+        error: 'text-red-600',
+        info: 'text-gray-600',
+        warning: 'text-amber-600'
+      };
+      container.textContent = message;
+      container.className = `mt-4 text-sm font-medium ${typeClasses[type] || typeClasses.info}`;
+    }
+
+    window.handleAdminAddModel = function(event) {
+      event.preventDefault();
+      const input = document.getElementById('newModel');
+      if (!input) return;
+      const value = input.value.trim();
+      if (!value) {
+        showAdminFeedback('Ingresa una marca o modelo válido.', 'error');
+        return;
+      }
+      if (getAvailableMakeModels().some(item => item.toLowerCase() === value.toLowerCase())) {
+        showAdminFeedback('Ese modelo ya existe en el catálogo.', 'warning');
+        input.value = '';
+        return;
+      }
+      customModels.push(value);
+      customModels = Array.from(new Set(customModels));
+      saveCatalogToStorage();
+      refreshCatalogSelects();
+      renderCatalogLists();
+      showAdminFeedback(`Modelo "${value}" agregado correctamente.`, 'success');
+      input.value = '';
+    };
+
+    window.handleAdminAddSize = function(event) {
+      event.preventDefault();
+      const input = document.getElementById('newSize');
+      if (!input) return;
+      const value = input.value.trim().toUpperCase();
+      if (!value) {
+        showAdminFeedback('Ingresa una medida válida.', 'error');
+        return;
+      }
+      if (getAvailableTireSizes().some(item => item.toLowerCase() === value.toLowerCase())) {
+        showAdminFeedback('Esa medida ya existe en el catálogo.', 'warning');
+        input.value = '';
+        return;
+      }
+      customSizes.push(value);
+      customSizes = Array.from(new Set(customSizes));
+      saveCatalogToStorage();
+      refreshCatalogSelects();
+      renderCatalogLists();
+      showAdminFeedback(`Medida "${value}" agregada correctamente.`, 'success');
+      input.value = '';
+    };
+
+    function attachOrderNumberHandlers() {
+      const orderInput = document.getElementById('orderNumber');
+      if (!orderInput) return;
+      orderInput.addEventListener('input', handleOrderNumberInput);
+      orderInput.addEventListener('change', handleOrderNumberInput);
+      orderInput.addEventListener('blur', handleOrderNumberInput);
+    }
+
+    function setOrderInputState(status, error) {
+      fleetLoadStatus = status;
+      fleetLoadError = error ? String(error) : '';
+      const orderInput = document.getElementById('orderNumber');
+      const feedback = document.getElementById('orderNumberFeedback');
+      if (!orderInput || !feedback) return;
+      if (status === 'loading') {
+        orderInput.placeholder = 'Cargando catálogo de flota...';
+        feedback.textContent = 'Conectando a la hoja "Flota Verschae"...';
+        feedback.className = 'mt-1 text-xs text-gray-500';
+      } else if (status === 'ready') {
+        orderInput.placeholder = 'Escribe o selecciona una orden de la flota';
+        if (!orderInput.value.trim()) {
+          feedback.textContent = 'Selecciona la orden desde la planilla para evitar errores.';
+          feedback.className = 'mt-1 text-xs text-gray-500';
+        }
+      } else if (status === 'error') {
+        orderInput.placeholder = 'Ingresa el número de orden';
+        feedback.textContent = 'No se pudo validar automáticamente. Ingresa el N° manualmente y verifica en la planilla.';
+        feedback.className = 'mt-1 text-xs text-amber-600';
+        orderInput.classList.remove('input-valid', 'input-invalid');
+        orderInput.setCustomValidity('');
+      }
+    }
+
+    function refreshOrderDatalist() {
+      const datalist = document.getElementById('orderNumberOptions');
+      if (!datalist) return;
+      datalist.innerHTML = '';
+      if (!fleetEntries.length) return;
+      const sorted = [...fleetEntries].sort((a, b) => compareOrderNumbers(a.orderNumber, b.orderNumber));
+      sorted.forEach((entry) => {
+        const value = entry.orderNumber || entry.normalizedOrder;
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = entry.plate ? `${value} · ${entry.plate}` : value;
+        datalist.appendChild(option);
+      });
+    }
+
+    function handleOrderNumberInput() {
+      const orderInput = document.getElementById('orderNumber');
+      const plateInput = document.getElementById('vehiclePlate');
+      const feedback = document.getElementById('orderNumberFeedback');
+      const mileageInput = document.getElementById('mileage');
+      if (!orderInput || !feedback) return;
+      const rawValue = orderInput.value || '';
+      const normalized = normalizeOrderKey(rawValue);
+
+      if (!rawValue.trim()) {
+        orderInput.classList.remove('input-valid', 'input-invalid');
+        orderInput.setCustomValidity('');
+        if (feedback) {
+          feedback.textContent = fleetLoadStatus === 'ready' ? 'Selecciona la orden desde la planilla para evitar errores.' : feedback.textContent;
+          feedback.className = 'mt-1 text-xs text-gray-500';
+        }
+        if (plateInput) plateInput.value = '';
+        if (mileageInput) mileageInput.value = '';
+        return;
+      }
+
+      if (fleetLookup.has(normalized)) {
+        const match = fleetLookup.get(normalized);
+        if (match) {
+          orderInput.value = match.orderNumber || rawValue.trim();
+          orderInput.classList.add('input-valid');
+          orderInput.classList.remove('input-invalid');
+          orderInput.setCustomValidity('');
+          if (feedback) {
+            feedback.textContent = match.plate ? `Patente encontrada: ${match.plate}` : 'Orden validada en la flota.';
+            feedback.className = 'mt-1 text-xs text-green-600';
+          }
+          if (plateInput) {
+            plateInput.value = match.plate || 'Sin patente registrada';
+          }
+          if (mileageInput && match.mileage !== null && match.mileage !== undefined && match.mileage !== '') {
+            mileageInput.value = match.mileage;
+          }
+          return;
+        }
+      }
+
+      if (fleetLoadStatus === 'error') {
+        orderInput.classList.remove('input-valid', 'input-invalid');
+        orderInput.setCustomValidity('');
+        if (feedback) {
+          feedback.textContent = 'No se pudo validar con la planilla. Verifica manualmente el N° de móvil (columna C).';
+          feedback.className = 'mt-1 text-xs text-amber-600';
+        }
+      } else {
+        orderInput.classList.add('input-invalid');
+        orderInput.classList.remove('input-valid');
+        orderInput.setCustomValidity('Número de móvil no encontrado en la hoja "Flota Verschae". Revisa la columna C.');
+        if (feedback) {
+          feedback.textContent = 'Número incorrecto. Confirma el N° de móvil (columna C) en la planilla.';
+          feedback.className = 'mt-1 text-xs text-red-600';
+        }
+      }
+      if (plateInput) plateInput.value = '';
+      if (mileageInput) mileageInput.value = '';
+    }
+
+    function resetOrderAutofill() {
+      const orderInput = document.getElementById('orderNumber');
+      const plateInput = document.getElementById('vehiclePlate');
+      const feedback = document.getElementById('orderNumberFeedback');
+      if (orderInput) {
+        orderInput.classList.remove('input-valid', 'input-invalid');
+        orderInput.setCustomValidity('');
+        orderInput.value = '';
+      }
+      if (plateInput) plateInput.value = '';
+      if (feedback) {
+        feedback.textContent = fleetLoadStatus === 'ready' ? 'Selecciona la orden desde la planilla para evitar errores.' : 'Número de orden del vehículo.';
+        feedback.className = 'mt-1 text-xs text-gray-500';
+      }
+    }
+
+    async function loadFleetDataset() {
+      setOrderInputState('loading');
+      try {
+        const { entries, lookup } = await fetchFleetDataset();
+        fleetEntries = entries;
+        fleetLookup = lookup;
+        setOrderInputState('ready');
+        refreshOrderDatalist();
+        handleOrderNumberInput();
+      } catch (error) {
+        console.error('No se pudo cargar la planilla de flota:', error);
+        fleetLookup = new Map();
+        fleetEntries = [];
+        setOrderInputState('error', error);
+      }
+    }
+
+    async function downloadOneDriveWorkbook({ allowRetry = true, forceReauth = false } = {}) {
+      const token = await ensureOneDriveAccessToken({ forceRefresh: forceReauth });
+      if (!token) {
+        throw new Error('No se pudo obtener un token de acceso para OneDrive.');
+      }
+
+      const response = await fetch(FLEET_GRAPH_CONTENT_URL, {
+        method: 'GET',
+        cache: 'no-store',
+        mode: 'cors',
+        credentials: 'omit',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/octet-stream',
+        },
+      });
+
+      if (response.status === 401 || response.status === 403) {
+        if (allowRetry) {
+          console.warn('Token de OneDrive rechazado, reintentando autenticación completa…');
+          clearOneDriveSession();
+          return downloadOneDriveWorkbook({ allowRetry: false, forceReauth: true });
+        }
+        throw new Error(`Acceso denegado por OneDrive (${response.status}).`);
+      }
+
+      if (!response.ok) {
+        throw new Error(`Error ${response.status} al obtener la planilla desde OneDrive.`);
+      }
+
+      return response.arrayBuffer();
+    }
+
+    async function fetchFleetDataset() {
+      const hasSpreadsheetParser = typeof XLSX !== 'undefined';
+      const errors = [];
+
+      // 1) Intento directo a OneDrive autenticado
+      if (hasSpreadsheetParser) {
+        try {
+          const arrayBuffer = await downloadOneDriveWorkbook();
+          return parseFleetWorkbook(arrayBuffer);
+        } catch (error) {
+          errors.push(error);
+          console.warn('Fallo al descargar desde OneDrive autenticado, intentando respaldo GitHub…', error);
+        }
+      } else {
+        errors.push(new Error('XLSX no disponible para leer la planilla de OneDrive.'));
+      }
+
+      // 2) Respaldo en GitHub (permite actualizar manualmente el dataset)
+      try {
+        const response = await fetch(FLEET_GITHUB_FALLBACK_URL, { cache: 'no-store', mode: 'cors' });
+        if (!response.ok) {
+          throw new Error(`Error ${response.status} al obtener el respaldo de GitHub`);
+        }
+
+        const contentType = (response.headers.get('content-type') || '').toLowerCase();
+        if (hasSpreadsheetParser && (contentType.includes('spreadsheetml') || contentType.includes('application/octet-stream'))) {
+          const arrayBuffer = await response.arrayBuffer();
+          return parseFleetWorkbook(arrayBuffer);
+        }
+
+        const textPayload = await response.text();
+        const trimmed = textPayload.trim();
+
+        if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+          const json = JSON.parse(trimmed);
+          return parseFleetJson(json);
+        }
+
+        if (trimmed.startsWith('http')) {
+          // El archivo de respaldo puede contener un enlace actualizado.
+          if (hasSpreadsheetParser) {
+            const arrayBuffer = await fetchAsArrayBuffer(trimmed);
+            return parseFleetWorkbook(arrayBuffer);
+          }
+          throw new Error('Se requiere XLSX para leer el enlace alternativo de la planilla.');
+        }
+
+        return parseFleetCsv(trimmed);
+      } catch (error) {
+        errors.push(error);
+        console.error('Fallo al usar el respaldo GitHub:', error);
+      }
+
+      const combinedError = new Error(errors.map(err => err?.message || String(err)).join(' | '));
+      combinedError.details = errors;
+      throw combinedError;
+    }
+
+    async function fetchAsArrayBuffer(url) {
+      const response = await fetch(url, { cache: 'no-store', mode: 'cors' });
+      if (!response.ok) {
+        throw new Error(`Error ${response.status} al obtener ${url}`);
+      }
+      return response.arrayBuffer();
+    }
+
+    function parseFleetWorkbook(arrayBuffer) {
+      const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+      const sheet = workbook.Sheets[FLEET_SHEET_NAME];
+      if (!sheet) {
+        throw new Error(`La hoja "${FLEET_SHEET_NAME}" no existe en el archivo.`);
+      }
+      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+      return buildFleetEntriesFromRows(rows);
+    }
+
+    function parseFleetJson(jsonPayload) {
+      if (!Array.isArray(jsonPayload)) {
+        throw new Error('El respaldo JSON de flota debe ser un arreglo.');
+      }
+      const entries = [];
+      const lookup = new Map();
+      jsonPayload.forEach((item) => {
+        if (!item) return;
+        const displayOrder = item.orderNumber || item.orden || item.order || '';
+        const normalizedOrder = normalizeOrderKey(displayOrder || item.mobile || item.movil);
+        if (!normalizedOrder) return;
+        const plate = String(item.plate || item.patente || '').toUpperCase().trim();
+        const mileageValue = item.mileage ?? item.kilometraje ?? item.km ?? null;
+        const mileage = mileageValue === null || mileageValue === undefined ? null : parseInt(String(mileageValue).replace(/[^0-9]/g, ''), 10);
+        const entry = {
+          orderNumber: displayOrder || normalizedOrder,
+          normalizedOrder,
+          plate,
+          mileage: Number.isFinite(mileage) ? mileage : null
+        };
+        entries.push(entry);
+        if (!lookup.has(normalizedOrder)) {
+          lookup.set(normalizedOrder, entry);
+        }
+      });
+      if (!entries.length) {
+        throw new Error('El respaldo JSON no contiene registros válidos.');
+      }
+      return { entries, lookup };
+    }
+
+    function parseFleetCsv(textPayload) {
+      const rows = textPayload.split(/\r?\n/).map(row => row.split(/\s*[,;\t]\s*/));
+      return buildFleetEntriesFromRows(rows);
+    }
+
+    function buildFleetEntriesFromRows(rows) {
+      if (!rows.length) {
+        throw new Error('La hoja seleccionada está vacía.');
+      }
+      const headers = rows[0];
+      const maxColumns = rows.reduce((max, row) => Array.isArray(row) ? Math.max(max, row.length) : max, Array.isArray(headers) ? headers.length : 0);
+      const clampIndex = (candidate, fallbackPreference) => {
+        if (typeof candidate === 'number' && candidate >= 0 && candidate < maxColumns) {
+          return candidate;
+        }
+        const adjusted = typeof fallbackPreference === 'number' ? fallbackPreference : 0;
+        if (maxColumns === 0) return 0;
+        if (adjusted >= 0 && adjusted < maxColumns) return adjusted;
+        return Math.max(0, Math.min(maxColumns - 1, adjusted));
+      };
+
+      const orderIndex = clampIndex(findColumnIndex(headers, ORDER_KEYWORDS, FLEET_FALLBACK_INDEX.order), 0);
+      const mobileIndex = clampIndex(findColumnIndex(headers, MOBILE_KEYWORDS, FLEET_FALLBACK_INDEX.mobile), orderIndex);
+      const plateIndex = clampIndex(findColumnIndex(headers, PLATE_KEYWORDS, FLEET_FALLBACK_INDEX.plate), Math.min(1, maxColumns - 1));
+      const mileageIndex = clampIndex(findColumnIndex(headers, MILEAGE_KEYWORDS, FLEET_FALLBACK_INDEX.mileage), Math.min(2, maxColumns - 1));
+
+      const entries = [];
+      const lookup = new Map();
+
+      rows.slice(1).forEach((row) => {
+        if (!row || row.every(cell => String(cell || '').trim() === '')) return;
+        const rawOrder = safeCellValue(row, orderIndex);
+        const rawMobile = safeCellValue(row, mobileIndex);
+        const displayOrder = rawOrder || rawMobile;
+        const normalizedOrder = normalizeOrderKey(displayOrder || rawMobile);
+        if (!normalizedOrder) return;
+        const plate = safeCellValue(row, plateIndex).toUpperCase();
+        const mileageValue = safeCellValue(row, mileageIndex);
+        const mileage = mileageValue ? parseInt(String(mileageValue).replace(/[^0-9]/g, ''), 10) : null;
+        const entry = {
+          orderNumber: displayOrder || normalizedOrder,
+          normalizedOrder,
+          plate,
+          mileage: Number.isFinite(mileage) ? mileage : null
+        };
+        entries.push(entry);
+        if (!lookup.has(normalizedOrder)) {
+          lookup.set(normalizedOrder, entry);
+        }
+      });
+
+      if (!entries.length) {
+        throw new Error('No se encontraron registros válidos en la hoja.');
+      }
+
+      return { entries, lookup };
+    }
+
+    function compareOrderNumbers(a, b) {
+      const valueA = normalizeOrderKey(a);
+      const valueB = normalizeOrderKey(b);
+      if (valueA === valueB) return 0;
+      const numericA = parseInt(valueA.replace(/[^0-9]/g, ''), 10);
+      const numericB = parseInt(valueB.replace(/[^0-9]/g, ''), 10);
+      if (Number.isFinite(numericA) && Number.isFinite(numericB) && numericA !== numericB) {
+        return numericA - numericB;
+      }
+      return valueA.localeCompare(valueB, 'es', { numeric: true, sensitivity: 'base' });
+    }
 
     // --- TUS CREDENCIALES DE FIREBASE ---
     const firebaseConfig = {
@@ -318,10 +984,15 @@
       const recordDetails = formatRecordForPrompt(record);
       const systemPrompt = "Actúa como ingeniero de mantenimiento de flotas y experto en neumáticos. Analiza el informe de surcos. Indica neumáticos críticos (<3mm) y sugiere un plan de acción conciso y priorizado (rotación, reemplazo, alineación, presión). Usa fuentes web si es útil y lista las citas.";
       const userQuery = `Análisis de la Orden N° ${record.orderNumber} con ${record.mileage} km:\n\n${recordDetails}`;
+      if (!apiKey) {
+        console.error('No se ha configurado la clave de API de Gemini.');
+        return displayAppMessage('Configura la clave de Gemini antes de usar el análisis con IA.', 'error');
+      }
+
       const payload = {
-        contents: [{ parts: [{ text: userQuery }] }],
-        systemInstruction: { parts: [{ text: systemPrompt }] },
-        tools: [{ "google_search": {} }]
+        contents: [{ role: 'user', parts: [{ text: userQuery }] }],
+        systemInstruction: { role: 'system', parts: [{ text: systemPrompt }] },
+        tools: [{ google_search: {} }]
       };
 
       try {
@@ -330,13 +1001,15 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         });
-        if (!res.ok) throw new Error(`Gemini API request failed with status ${res.status}`);
-
         const result = await res.json();
+        if (!res.ok) {
+          const apiError = result?.error?.message;
+          throw new Error(apiError ? `Gemini API error: ${apiError}` : `Gemini API request failed with status ${res.status}`);
+        }
         const candidate = result?.candidates?.[0];
         const text = candidate?.content?.parts?.[0]?.text || 'No se pudo generar un análisis.';
         const sources = (candidate?.groundingMetadata?.groundingAttributions || []).map(a => ({ uri: a?.web?.uri, title: a?.web?.title })).filter(s => s.uri && s.title);
-        
+
         displayAppMessage(`✅ Análisis de Orden N° ${record.orderNumber} generado.`, 'success');
         console.log(`--- Análisis Gemini Orden N° ${record.orderNumber} ---`);
         console.log(text);
@@ -348,7 +1021,8 @@
 
       } catch (e) {
         console.error("Error en el análisis con Gemini:", e);
-        displayAppMessage('Error al conectar con la IA.', 'error');
+        const friendlyMessage = e?.message?.startsWith('Gemini API') ? e.message : 'Error al conectar con la IA.';
+        displayAppMessage(friendlyMessage, 'error');
       }
     }
 
@@ -560,7 +1234,7 @@
             }
         });
         
-        const latestRecords = Array.from(latestRecordsMap.values()).sort((a, b) => a.orderNumber - b.orderNumber);
+        const latestRecords = Array.from(latestRecordsMap.values()).sort((a, b) => compareOrderNumbers(a.orderNumber, b.orderNumber));
 
         const { jsPDF } = window.jspdf;
         const doc = new jsPDF();
@@ -725,7 +1399,7 @@
     }
 
     window.switchTab = function(tabName) {
-      ['guide', 'register', 'records'].forEach(tab => {
+      ['guide', 'register', 'records', 'admin'].forEach(tab => {
         document.getElementById(`tab-button-${tab}`)?.classList.toggle('active', tab === tabName);
         document.getElementById(`tab-content-${tab}`)?.classList.toggle('hidden', tab !== tabName);
       });
@@ -735,6 +1409,9 @@
         const filter = document.getElementById('branchFilter');
         if (filter) filter.value = 'all';
         applyFiltersAndDisplay();
+      }
+      if (tabName === 'admin') {
+        renderCatalogLists();
       }
     }
 
@@ -749,6 +1426,8 @@
       if (reviewBtn) reviewBtn.disabled = true;
       const dateEl = document.getElementById('date');
       if (dateEl) dateEl.value = new Date().toISOString().slice(0, 10);
+      resetOrderAutofill();
+      refreshCatalogSelects();
     }
 
     window.generateTireInputs = function() {
@@ -756,6 +1435,7 @@
       const container = document.getElementById('tireInputsContainer');
       container.innerHTML = '';
       const positions = TIRES_STRUCTURE[vehicleType] || [];
+      const modelOptions = getMakeModelOptionsMarkup();
 
       positions.forEach((position, index) => {
         const positionDesc = getPositionDescription(position);
@@ -767,7 +1447,7 @@
               <label class="block text-xs font-medium text-gray-700 mb-1" for="tireMakeModel-${index}">Marca y Modelo (Específico)</label>
               <select id="tireMakeModel-${index}" name="tireMakeModel_${position}" class="form-control text-sm">
                 <option value="" selected>Usar marca general del formulario</option>
-                ${PREDEFINED_MODELS.map(m => `<option value="${m}">${m}</option>`).join('')}
+                ${modelOptions}
               </select>
             </div>
             <div class="grid grid-cols-3 gap-2 mb-4">
@@ -813,9 +1493,35 @@
             return;
         }
 
+        const orderInput = document.getElementById('orderNumber');
+        if (orderInput && !orderInput.checkValidity()) {
+            displayReview([{type: 'error', text: orderInput.validationMessage || 'Número de orden inválido.'}]);
+            finishReview(reviewBtn);
+            return;
+        }
+
+        const normalizedOrder = normalizeOrderKey(generalData.orderNumber);
+        if (!normalizedOrder) {
+            displayReview([{type: 'error', text: 'Ingresa un número de orden válido.'}]);
+            finishReview(reviewBtn);
+            return;
+        }
+
+        const matchedOrder = fleetLookup.get(normalizedOrder);
+        const orderDisplay = matchedOrder?.orderNumber || generalData.orderNumber.trim();
+        const vehiclePlate = generalData.vehiclePlate || matchedOrder?.plate || '';
+
+        const mileageValue = parseInt(generalData.mileage, 10);
+        if (!Number.isFinite(mileageValue)) {
+            displayReview([{type: 'error', text: 'El kilometraje debe ser un número válido.'}]);
+            finishReview(reviewBtn);
+            return;
+        }
+
         const data = {
-            orderNumber: parseInt(generalData.orderNumber),
-            mileage: parseInt(generalData.mileage),
+            orderNumber: orderDisplay,
+            orderNumberNormalized: normalizedOrder,
+            mileage: mileageValue,
             date: generalData.date,
             tireSize: generalData.tireSize,
             vehicleType: generalData.vehicleType,
@@ -823,6 +1529,7 @@
             generalComments: generalData.generalComments || '',
             technicianId: currentUserId,
             branchName: generalData.branchName,
+            vehiclePlate,
             tires: [],
             photoFiles: []
         };
@@ -1340,13 +2047,26 @@
     
     // === INICIO DE LA APP ===
     window.onload = function() {
+      loadCatalogFromStorage();
+      renderCatalogLists();
+      attachOrderNumberHandlers();
+      setOrderInputState('loading');
+      ensureOneDriveAccessToken()
+        .catch((error) => {
+          console.warn('No se pudo iniciar sesión automáticamente en OneDrive:', error);
+          clearOneDriveSession();
+        })
+        .finally(() => {
+          loadFleetDataset();
+        });
+
       initializeAppCore().then(() => {
-        const makeModelSelect = document.getElementById('makeModel');
-        const tireSizeSelect = document.getElementById('tireSize');
         const branchSelect = document.getElementById('branchName');
-        PREDEFINED_MODELS.forEach(m => makeModelSelect.insertAdjacentHTML('beforeend', `<option value="${m}">${m}</option>`));
-        PREDEFINED_SIZES.forEach(s => tireSizeSelect.insertAdjacentHTML('beforeend', `<option value="${s}">${s}</option>`));
-        BRANCHES.forEach(b => branchSelect.insertAdjacentHTML('beforeend', `<option value="${b}">${b}</option>`));
+        if (branchSelect) {
+          branchSelect.innerHTML = '<option value="" disabled selected>Selecciona una sucursal...</option>' + BRANCHES.map(branch => `<option value="${branch}">${branch}</option>`).join('');
+        }
+
+        refreshCatalogSelects();
 
         const exportMenuButton = document.getElementById('exportMenuButton');
         const exportMenu = document.getElementById('exportMenu');
@@ -1410,6 +2130,8 @@
             <button id="tab-button-guide" onclick="switchTab('guide')" type="button" class="tab-button">Guía Rápida</button>
             <button id="tab-button-register" onclick="switchTab('register')" type="button" class="tab-button">Registrar</button>
             <button id="tab-button-records" onclick="switchTab('records')" type="button" class="tab-button">Historial</button>
+            <button id="tab-button-admin" onclick="switchTab('admin')" type="button" class="tab-button hidden" data-creator-tab>Catálogo</button>
+            <!-- Para habilitar el acceso privado, elimina la clase "hidden" del botón Catálogo desde las herramientas del navegador. -->
           </div>
         </div>
       </nav>
@@ -1449,7 +2171,13 @@
               </div>
               <div>
                 <label for="orderNumber" class="block text-sm font-medium text-gray-700 mb-1">Número de Orden (Vehículo)</label>
-                <input type="number" id="orderNumber" name="orderNumber" class="form-control" placeholder="Ej: 12345" required />
+                <input type="text" id="orderNumber" name="orderNumber" class="form-control" placeholder="Cargando catálogo..." inputmode="numeric" autocomplete="off" list="orderNumberOptions" required />
+                <datalist id="orderNumberOptions"></datalist>
+                <p id="orderNumberFeedback" class="mt-1 text-xs text-gray-500">Número de orden del vehículo.</p>
+              </div>
+              <div>
+                <label for="vehiclePlate" class="block text-sm font-medium text-gray-700 mb-1">Patente Asociada</label>
+                <input type="text" id="vehiclePlate" name="vehiclePlate" class="form-control readonly-input" placeholder="Se completará automáticamente" readonly tabindex="-1" />
               </div>
               <div>
                 <label for="mileage" class="block text-sm font-medium text-gray-700 mb-1">Kilometraje</label>
@@ -1502,6 +2230,37 @@
             </button>
           </div>
         </form>
+      </div>
+
+      <div id="tab-content-admin" class="hidden">
+        <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+          <h2 class="text-xl font-bold text-gray-800 mb-2">Catálogo privado de neumáticos</h2>
+          <p class="text-sm text-gray-600">Esta sección está oculta para el resto del equipo. Utilízala para registrar nuevas marcas/modelos y medidas que luego aparecerán en el formulario principal.</p>
+          <div id="adminFeedback" class="mt-4 text-sm text-gray-500"></div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
+            <form id="catalogModelForm" onsubmit="handleAdminAddModel(event)" class="space-y-3">
+              <h3 class="text-lg font-semibold text-gray-700">Registrar marca/modelo</h3>
+              <p class="text-xs text-gray-500">Agrega combinaciones para reutilizarlas en la medición general o por neumático.</p>
+              <input type="text" id="newModel" class="form-control" placeholder="Ej: Continental Conti Coach HA3" required />
+              <button type="submit" class="px-4 py-2 bg-primary text-white text-sm font-semibold rounded-lg hover:bg-secondary transition">Guardar modelo</button>
+            </form>
+            <form id="catalogSizeForm" onsubmit="handleAdminAddSize(event)" class="space-y-3">
+              <h3 class="text-lg font-semibold text-gray-700">Registrar medida</h3>
+              <p class="text-xs text-gray-500">Agrega nuevas medidas (usa formato 295/80R22.5).</p>
+              <input type="text" id="newSize" class="form-control" placeholder="Ej: 275/70R22.5" required />
+              <button type="submit" class="px-4 py-2 bg-secondary text-white text-sm font-semibold rounded-lg hover:bg-primary transition">Guardar medida</button>
+            </form>
+          </div>
+          <div class="mt-8">
+            <h3 class="text-sm font-semibold text-gray-600 uppercase tracking-wide mb-3">Modelos personalizados</h3>
+            <div id="customModelList" class="flex flex-wrap gap-2"></div>
+          </div>
+          <div class="mt-6">
+            <h3 class="text-sm font-semibold text-gray-600 uppercase tracking-wide mb-3">Medidas personalizadas</h3>
+            <div id="customSizeList" class="flex flex-wrap gap-2"></div>
+          </div>
+          <p class="mt-6 text-xs text-gray-400">Los datos se almacenan localmente en este navegador. Exporta la lista si deseas respaldarla.</p>
+        </div>
       </div>
 
       <div id="tab-content-records" class="hidden">
