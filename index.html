@@ -1178,6 +1178,25 @@
     }
     
     // === GESTIÓN DE DATOS (FIRESTORE) ===
+    function repopulateSelectOptions(select, options, { fallbackValue = '', keepSelection = true } = {}) {
+      if (!select) return;
+      const previousValue = select.value;
+      while (select.options.length > 1) {
+        select.remove(1);
+      }
+      options.forEach(optionValue => {
+        const option = document.createElement('option');
+        option.value = optionValue;
+        option.textContent = optionValue;
+        select.appendChild(option);
+      });
+      if (keepSelection && options.includes(previousValue)) {
+        select.value = previousValue;
+      } else {
+        select.value = fallbackValue;
+      }
+    }
+
     function loadRecords() {
       if (!db || !authReady) return;
       if (typeof unsubscribeRecords === 'function') {
@@ -1196,41 +1215,8 @@
         const uniqueBranches = [...new Set(window.currentRecords.map(r => r.branchName).filter(Boolean))];
         const sortedBranches = uniqueBranches.sort((a, b) => a.localeCompare(b));
 
-        if (branchFilter) {
-            const currentFilterValue = branchFilter.value;
-            while (branchFilter.options.length > 1) {
-                branchFilter.remove(1);
-            }
-            sortedBranches.forEach(branch => {
-                const option = document.createElement('option');
-                option.value = branch;
-                option.textContent = branch;
-                branchFilter.appendChild(option);
-            });
-            if (currentFilterValue && sortedBranches.includes(currentFilterValue)) {
-                branchFilter.value = currentFilterValue;
-            } else {
-                branchFilter.value = 'all';
-            }
-        }
-
-        if (branchColumnFilter) {
-            const currentColumnValue = branchColumnFilter.value;
-            while (branchColumnFilter.options.length > 1) {
-                branchColumnFilter.remove(1);
-            }
-            sortedBranches.forEach(branch => {
-                const option = document.createElement('option');
-                option.value = branch;
-                option.textContent = branch;
-                branchColumnFilter.appendChild(option);
-            });
-            if (currentColumnValue && sortedBranches.includes(currentColumnValue)) {
-                branchColumnFilter.value = currentColumnValue;
-            } else {
-                branchColumnFilter.value = '';
-            }
-        }
+        repopulateSelectOptions(branchFilter, sortedBranches, { fallbackValue: 'all' });
+        repopulateSelectOptions(branchColumnFilter, sortedBranches);
 
         applyFiltersAndDisplay();
       }, (err) => console.error("Error en onSnapshot:", err));
