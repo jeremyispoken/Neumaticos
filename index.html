@@ -77,6 +77,7 @@
     const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
     const apiKey = typeof __gemini_key !== 'undefined' ? __gemini_key : "";
     const BRANCHES = ["Copiapó", "Vallenar", "Santiago", "Viña del Mar", "Casa Matriz"];
+    const FLEET_REMOTE_DATA_URL = "https://firebasestorage.googleapis.com/v0/b/neumaticos-fv.firebasestorage.app/o/tire_photos%2FZisWYgZS4WUnO06Uh0fqDFGfC7k2%2FControl%20de%20Mantenciones%20Preventivas%20Flota%20Verschae.xlsx?alt=media&token=1131f6fd-1688-4056-9cbc-4dc84a780d1c";
     const TIRES_STRUCTURE = {
       'Bus': ['P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'Repuesto'],
       'Taxibus': ['P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'Repuesto'],
@@ -138,7 +139,10 @@
     let fleetDatasetMeta = null;
     let customModels = [];
     let customSizes = [];
+    let catalogCloudLoaded = false;
     let maintenanceStatusChart = null;
+    let dashboardBranchSelection = 'Todas';
+    let dashboardVehicleSelection = 'Todos';
     let dashboardStatusFilter = 'Todos';
     let dashboardCachedEntries = [];
 
@@ -263,6 +267,76 @@
       }
     }
 
+    function mergeCatalogEntries({ models = [], sizes = [] } = {}) {
+      if (Array.isArray(models) && models.length) {
+        customModels = Array.from(new Set([...customModels, ...models.filter(Boolean)]));
+      }
+      if (Array.isArray(sizes) && sizes.length) {
+        customSizes = Array.from(new Set([...customSizes, ...sizes.filter(Boolean)]));
+      }
+    }
+
+    async function loadCatalogFromFirestore(force = false) {
+      if (!db) return;
+      if (catalogCloudLoaded && !force) return;
+      try {
+        const docRef = doc(db, 'artifacts', appId, 'private', 'tire_catalog');
+        const snapshot = await getDoc(docRef);
+        catalogCloudLoaded = true;
+        if (!snapshot.exists()) {
+          if (force) {
+            showAdminFeedback('No se encontró un catálogo remoto. Guarda uno primero desde este panel.', 'warning');
+          }
+          return;
+        }
+        const data = snapshot.data() || {};
+        mergeCatalogEntries({ models: data.models, sizes: data.sizes });
+        saveCatalogToStorage();
+        refreshCatalogSelects();
+        renderCatalogLists();
+        const message = 'Catálogo personalizado sincronizado desde Firebase.';
+        if (force) {
+          showAdminFeedback(message, 'success');
+        } else {
+          displayAppMessage(message, 'success');
+        }
+      } catch (error) {
+        console.error('No se pudo recuperar el catálogo desde Firebase:', error);
+        if (force) {
+          showAdminFeedback('No se pudo recuperar el catálogo remoto. Revisa la consola para más detalles.', 'error');
+        }
+      }
+    }
+
+    async function syncCatalogToFirestore({ silent = false } = {}) {
+      if (!db || !authReady) {
+        if (!silent) {
+          showAdminFeedback('Conéctate a Firebase antes de sincronizar el catálogo.', 'error');
+        }
+        return false;
+      }
+      try {
+        const docRef = doc(db, 'artifacts', appId, 'private', 'tire_catalog');
+        await setDoc(docRef, {
+          models: customModels.filter(Boolean),
+          sizes: customSizes.filter(Boolean),
+          updatedAt: serverTimestamp(),
+          updatedBy: currentUserId || 'anonymous'
+        }, { merge: true });
+        catalogCloudLoaded = true;
+        if (!silent) {
+          showAdminFeedback('Catálogo sincronizado correctamente en Firebase.', 'success');
+        }
+        return true;
+      } catch (error) {
+        console.error('No se pudo sincronizar el catálogo con Firebase:', error);
+        if (!silent) {
+          showAdminFeedback('Error al sincronizar el catálogo. Revisa la consola para más detalles.', 'error');
+        }
+        return false;
+      }
+    }
+
     function getAvailableMakeModels() {
       return Array.from(new Set([...PREDEFINED_MODELS, ...customModels.filter(Boolean)])).sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
     }
@@ -342,7 +416,7 @@
       container.className = `mt-4 text-sm font-medium ${typeClasses[type] || typeClasses.info}`;
     }
 
-    window.handleAdminAddModel = function(event) {
+    window.handleAdminAddModel = async function(event) {
       event.preventDefault();
       const input = document.getElementById('newModel');
       if (!input) return;
@@ -362,10 +436,16 @@
       refreshCatalogSelects();
       renderCatalogLists();
       showAdminFeedback(`Modelo "${value}" agregado correctamente.`, 'success');
+      const synced = await syncCatalogToFirestore({ silent: true });
+      if (synced) {
+        showAdminFeedback(`Modelo "${value}" agregado y respaldado en Firebase.`, 'success');
+      } else {
+        showAdminFeedback(`Modelo "${value}" agregado. Inicia sesión para sincronizar con Firebase.`, 'warning');
+      }
       input.value = '';
     };
 
-    window.handleAdminAddSize = function(event) {
+    window.handleAdminAddSize = async function(event) {
       event.preventDefault();
       const input = document.getElementById('newSize');
       if (!input) return;
@@ -385,6 +465,12 @@
       refreshCatalogSelects();
       renderCatalogLists();
       showAdminFeedback(`Medida "${value}" agregada correctamente.`, 'success');
+      const synced = await syncCatalogToFirestore({ silent: true });
+      if (synced) {
+        showAdminFeedback(`Medida "${value}" agregada y respaldada en Firebase.`, 'success');
+      } else {
+        showAdminFeedback(`Medida "${value}" agregada. Inicia sesión para sincronizar con Firebase.`, 'warning');
+      }
       input.value = '';
     };
 
@@ -517,8 +603,26 @@
       }
     }
 
-    function loadFleetDataset() {
+    async function loadFleetDataset() {
       setOrderInputState('loading');
+
+      let remoteLoaded = false;
+      try {
+        const remote = await fetchFleetDatasetFromRemote();
+        if (remote && Array.isArray(remote.entries) && remote.entries.length) {
+          applyFleetDataset(remote.entries, { meta: remote.meta || null });
+          showFleetUploadFeedback('Catálogo sincronizado desde la base central.', 'success');
+          remoteLoaded = true;
+        }
+      } catch (error) {
+        console.warn('No se pudo sincronizar el catálogo remoto:', error);
+        showFleetUploadFeedback('No fue posible sincronizar desde la base central. Se utilizará la información almacenada en este dispositivo.', 'warning');
+      }
+
+      if (remoteLoaded) {
+        return;
+      }
+
       const stored = restoreFleetDatasetFromStorage();
       if (stored && Array.isArray(stored.entries) && stored.entries.length) {
         applyFleetDataset(stored.entries, { skipSave: true, meta: stored.meta || null });
@@ -532,6 +636,20 @@
         updateFleetDatasetSummary();
         renderFleetDashboard([]);
       }
+    }
+
+    async function fetchFleetDatasetFromRemote() {
+      const response = await fetch(FLEET_REMOTE_DATA_URL, { cache: 'no-store' });
+      if (!response.ok) {
+        throw new Error(`Error al descargar la planilla remota: ${response.status}`);
+      }
+      const arrayBuffer = await response.arrayBuffer();
+      const entries = parseFleetWorkbook(arrayBuffer);
+      const meta = {
+        updatedAt: new Date().toISOString(),
+        sourceName: 'Control de Mantenciones Preventivas (base central)'
+      };
+      return { entries, meta };
     }
 
     function restoreFleetDatasetFromStorage() {
@@ -701,6 +819,16 @@
       return entries.map(normalizeFleetEntry).filter(Boolean);
     }
 
+    function determineMaintenanceStatus({ kmRemaining, rawStatus }) {
+      if (typeof kmRemaining === 'number' && Number.isFinite(kmRemaining)) {
+        if (kmRemaining <= 0) return 'Vencido';
+        if (kmRemaining <= DEFAULT_KM_ALERT_THRESHOLD) return 'Por Vencer';
+        return 'Óptimo';
+      }
+      const normalized = (rawStatus || '').toString().trim();
+      return normalized || 'Sin estado';
+    }
+
     function normalizeFleetEntry(entry) {
       if (!entry) return null;
       const normalizedOrder = normalizeOrderKey(entry.normalizedOrder || entry.orderNumber || entry.mobileNumber);
@@ -713,6 +841,8 @@
       const maintenanceKmValue = parseNumeric(entry.maintenanceKm ?? entry.kmsMant);
       const remainingKmValue = parseNumeric(entry.kmRemaining ?? entry.falta);
       const yearValue = parseNumeric(entry.year ?? entry.ano);
+      const kmRemaining = Number.isFinite(remainingKmValue) ? remainingKmValue : null;
+      const rawStatus = entry.maintenanceStatus || entry.estadoMp || entry.estado || '';
 
       return {
         orderNumber: entry.orderNumber || entry.mobileNumber || normalizedOrder,
@@ -733,8 +863,8 @@
         lastMaintenanceDate: formatDateValue(entry.lastMaintenanceDate || entry.fechaUltimaMantencion || ''),
         maintenancePlan: entry.maintenancePlan || entry.pautaUltimaMantencion || '',
         maintenanceKm: Number.isFinite(maintenanceKmValue) ? maintenanceKmValue : null,
-        kmRemaining: Number.isFinite(remainingKmValue) ? remainingKmValue : null,
-        maintenanceStatus: entry.maintenanceStatus || entry.estadoMp || entry.estado || ''
+        kmRemaining,
+        maintenanceStatus: determineMaintenanceStatus({ kmRemaining, rawStatus })
       };
     }
 
@@ -912,15 +1042,27 @@
       const summary = document.getElementById('dashboardSummary');
       const updatedAtEl = document.getElementById('dashboardUpdatedAt');
       const statusFilters = document.getElementById('dashboardStatusFilters');
+      const branchSelect = document.getElementById('dashboardBranchFilter');
+      const vehicleSelect = document.getElementById('dashboardVehicleFilter');
 
       dashboardCachedEntries = Array.isArray(entries) ? entries : [];
 
       if (!emptyState || !content) return;
       if (!dashboardCachedEntries.length) {
         dashboardStatusFilter = 'Todos';
+        dashboardBranchSelection = 'Todas';
+        dashboardVehicleSelection = 'Todos';
         emptyState.classList.remove('hidden');
         content.classList.add('hidden');
         if (updatedAtEl) updatedAtEl.textContent = '';
+        if (branchSelect) {
+          branchSelect.innerHTML = '<option value="Todas">Todas</option>';
+          branchSelect.value = 'Todas';
+        }
+        if (vehicleSelect) {
+          vehicleSelect.innerHTML = '<option value="Todos">Todos</option>';
+          vehicleSelect.value = 'Todos';
+        }
         if (maintenanceStatusChart) {
           maintenanceStatusChart.destroy();
           maintenanceStatusChart = null;
@@ -933,6 +1075,52 @@
 
       if (updatedAtEl) {
         updatedAtEl.textContent = fleetDatasetMeta?.updatedAt ? `Actualizado: ${formatDateTimeDisplay(fleetDatasetMeta.updatedAt)}` : '';
+      }
+
+      const branchValues = Array.from(new Set(dashboardCachedEntries.map(entry => {
+        const value = (entry.zone || entry.branch || '').toString().trim();
+        return value || 'Sin sucursal';
+      }))).sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
+      if (!branchValues.includes(dashboardBranchSelection) && dashboardBranchSelection !== 'Todas') {
+        dashboardBranchSelection = 'Todas';
+      }
+      if (branchSelect) {
+        const branchOptions = ['Todas', ...branchValues];
+        branchSelect.innerHTML = branchOptions.map(option => `<option value="${option}">${option}</option>`).join('');
+        branchSelect.value = dashboardBranchSelection;
+        branchSelect.onchange = (event) => {
+          dashboardBranchSelection = event.target.value;
+          renderFleetDashboard(dashboardCachedEntries);
+        };
+      }
+
+      const vehicleValues = Array.from(new Set(dashboardCachedEntries.map(entry => {
+        const value = (entry.typeTransport || entry.vehicleType || '').toString().trim();
+        return value || 'Sin tipo';
+      }))).sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
+      if (!vehicleValues.includes(dashboardVehicleSelection) && dashboardVehicleSelection !== 'Todos') {
+        dashboardVehicleSelection = 'Todos';
+      }
+      if (vehicleSelect) {
+        const vehicleOptions = ['Todos', ...vehicleValues];
+        vehicleSelect.innerHTML = vehicleOptions.map(option => `<option value="${option}">${option}</option>`).join('');
+        vehicleSelect.value = dashboardVehicleSelection;
+        vehicleSelect.onchange = (event) => {
+          dashboardVehicleSelection = event.target.value;
+          renderFleetDashboard(dashboardCachedEntries);
+        };
+      }
+
+      const filteredEntries = dashboardCachedEntries.filter(entry => {
+        const branchValue = (entry.zone || entry.branch || '').toString().trim() || 'Sin sucursal';
+        const vehicleValue = (entry.typeTransport || entry.vehicleType || '').toString().trim() || 'Sin tipo';
+        const branchMatch = dashboardBranchSelection === 'Todas' || branchValue === dashboardBranchSelection;
+        const vehicleMatch = dashboardVehicleSelection === 'Todos' || vehicleValue === dashboardVehicleSelection;
+        return branchMatch && vehicleMatch;
+      });
+
+      if (!filteredEntries.length) {
+        dashboardStatusFilter = 'Todos';
       }
 
       const kmRemainingValues = dashboardCachedEntries
@@ -974,7 +1162,7 @@
         `;
       }
 
-      const statusCounts = dashboardCachedEntries.reduce((acc, entry) => {
+      const statusCounts = filteredEntries.reduce((acc, entry) => {
         const status = (entry.maintenanceStatus || entry.status || 'Sin estado').toString().trim() || 'Sin estado';
         acc[status] = (acc[status] || 0) + 1;
         return acc;
@@ -997,7 +1185,7 @@
           });
           statusFilters.appendChild(button);
         };
-        buildButton('Todos', 'Todos', dashboardCachedEntries.length);
+        buildButton('Todos', 'Todos', filteredEntries.length);
         statuses.forEach(status => buildButton(status, status, statusCounts[status]));
       }
 
@@ -1009,35 +1197,34 @@
         }
         const ctx = chartCanvas.getContext('2d');
         maintenanceStatusChart = new window.Chart(ctx, {
-          type: 'bar',
+          type: 'doughnut',
           data: {
             labels: statuses,
             datasets: [{
               label: 'Vehículos',
               data: statuses.map(status => statusCounts[status] || 0),
               backgroundColor: statuses.map(getStatusColor),
-              borderRadius: 8
+              borderWidth: 1,
+              hoverOffset: 6
             }]
           },
           options: {
             responsive: true,
             maintainAspectRatio: false,
-            scales: {
-              y: {
-                beginAtZero: true,
-                ticks: {
-                  precision: 0
+            plugins: {
+              legend: {
+                position: 'bottom',
+                labels: {
+                  usePointStyle: true,
+                  pointStyle: 'circle'
                 }
               }
-            },
-            plugins: {
-              legend: { display: false }
             }
           }
         });
       }
 
-      renderDashboardDetail(dashboardCachedEntries, dashboardStatusFilter);
+      renderDashboardDetail(filteredEntries, dashboardStatusFilter);
     }
 
     async function handleFleetFileSelection(event) {
@@ -1100,6 +1287,12 @@
 
     window.requestFleetUpload = requestFleetUpload;
     window.clearFleetDataset = handleClearFleetDataset;
+    window.syncCatalogToFirebase = function() {
+      syncCatalogToFirestore();
+    };
+    window.restoreCatalogFromFirebase = function() {
+      loadCatalogFromFirestore(true);
+    };
 
     function compareOrderNumbers(a, b) {
       const valueA = normalizeOrderKey(a);
@@ -1141,6 +1334,7 @@
             currentUserId = user.uid;
             authReady = true;
             setUiState('authenticated', `ID: ${currentUserId.substring(0, 8)}...`);
+            loadCatalogFromFirestore();
             if (window.currentRecords.length === 0) {
               loadRecords();
             }
@@ -1741,12 +1935,16 @@
     }
 
     window.switchTab = function(tabName) {
-      ['guide', 'register', 'records', 'admin'].forEach(tab => {
+      ['guide', 'register', 'maintenance', 'records', 'admin'].forEach(tab => {
         document.getElementById(`tab-button-${tab}`)?.classList.toggle('active', tab === tabName);
         document.getElementById(`tab-content-${tab}`)?.classList.toggle('hidden', tab !== tabName);
       });
       if (tabName === 'guide') updateRandomRecommendation();
       if (tabName === 'register') resetRegistrationForm();
+      if (tabName === 'maintenance') {
+        const data = dashboardCachedEntries.length ? dashboardCachedEntries : fleetEntries;
+        renderFleetDashboard(data);
+      }
       if (tabName === 'records') {
         const filter = document.getElementById('branchFilter');
         if (filter) filter.value = 'all';
@@ -2251,6 +2449,51 @@
       }
     }
 
+    function buildTireExportRows(records) {
+      const rows = [];
+      if (!Array.isArray(records)) return rows;
+
+      records.forEach(record => {
+        const mileage = getRecordMileage(record);
+        const kpmm = typeof record.kpmm === 'number' && Number.isFinite(record.kpmm) ? record.kpmm : null;
+        const baseInfo = {
+          order: record.orderNumber || '',
+          branch: record.branchName || 'N/A',
+          vehicle: record.vehicleType || 'N/A',
+          mileage,
+          dateDisplay: getRecordDateDisplay(record),
+          dateIso: getRecordDateIso(record),
+          comments: record.generalComments || '',
+          technicianId: record.technicianId || '',
+          kpmm,
+          photoURL: '',
+        };
+
+        const tires = Array.isArray(record.tires) && record.tires.length ? record.tires : [null];
+        tires.forEach(tire => {
+          const surcos = [
+            tire ? parseFloat(tire.surco1) : NaN,
+            tire ? parseFloat(tire.surco2) : NaN,
+            tire ? parseFloat(tire.surco3) : NaN
+          ].map(value => (Number.isFinite(value) ? value : null));
+          const validSurcos = surcos.filter(value => Number.isFinite(value));
+          const minSurco = validSurcos.length ? Math.min(...validSurcos) : null;
+          const photoURL = tire && tire.photoURL && tire.photoURL !== 'N/A' ? tire.photoURL : '';
+
+          rows.push({
+            ...baseInfo,
+            position: tire ? tire.position || '' : 'Sin neumáticos registrados',
+            tireModel: tire ? (tire.makeModel || '') : '',
+            surcos,
+            minSurco,
+            photoURL,
+          });
+        });
+      });
+
+      return rows;
+    }
+
     function exportFilteredToPdf(records) {
       try {
         const { jsPDF } = window.jspdf;
@@ -2263,30 +2506,56 @@
         doc.setFont('helvetica', 'normal');
         doc.text(`Generado: ${generatedAt.toLocaleDateString('es-CL')}`, 14, 22);
 
-        const tableRows = records.map(record => {
-          const mileage = getRecordMileage(record);
-          const minSurco = getRecordMinSurco(record);
-          const kpmm = typeof record.kpmm === 'number' && Number.isFinite(record.kpmm) ? record.kpmm : null;
-
+        const tireRows = buildTireExportRows(records);
+        const tableMeta = [];
+        const tableRows = tireRows.map(row => {
+          tableMeta.push({ surcos: row.surcos, minSurco: row.minSurco });
+          const [surco1, surco2, surco3] = row.surcos.map(value => Number.isFinite(value) ? value.toFixed(1) : '-');
+          const minSurco = Number.isFinite(row.minSurco) ? row.minSurco.toFixed(1) : '-';
           return [
-            record.orderNumber || '',
-            record.branchName || 'N/A',
-            record.vehicleType || 'N/A',
-            mileage !== null ? mileage.toLocaleString('es-CL') : '-',
-            getRecordDateDisplay(record),
-            Number.isFinite(minSurco) ? minSurco.toFixed(1) : '-',
-            kpmm !== null ? kpmm.toLocaleString('es-CL') : 'N/A'
+            row.order,
+            row.branch,
+            row.vehicle,
+            row.position,
+            row.tireModel || '-',
+            row.mileage !== null ? row.mileage.toLocaleString('es-CL') : '-',
+            row.dateDisplay,
+            surco1,
+            surco2,
+            surco3,
+            minSurco,
+            row.kpmm !== null ? row.kpmm.toLocaleString('es-CL', { maximumFractionDigits: 2 }) : 'N/A'
           ];
         });
 
         doc.autoTable({
           startY: 28,
-          head: [['Orden', 'Sucursal', 'Vehículo', 'KM', 'Fecha', 'Surco Mín. (mm)', 'Rendimiento (km/mm)']],
+          head: [['Orden', 'Sucursal', 'Vehículo', 'Posición', 'Modelo', 'KM', 'Fecha', 'Surco 1 (mm)', 'Surco 2 (mm)', 'Surco 3 (mm)', 'Surco mín. (mm)', 'Rendimiento (km/mm)']],
           body: tableRows,
           styles: { fontSize: 8 },
           headStyles: { fillColor: [5, 150, 105], textColor: 255 },
           alternateRowStyles: { fillColor: [245, 245, 245] },
-          margin: { left: 14, right: 14 }
+          margin: { left: 14, right: 14 },
+          didParseCell(data) {
+            if (data.section !== 'body') return;
+            const meta = tableMeta[data.row.index];
+            if (!meta) return;
+            const highlightCell = () => {
+              data.cell.styles.fillColor = [253, 230, 138];
+              data.cell.styles.textColor = [185, 28, 28];
+              data.cell.styles.fontStyle = 'bold';
+            };
+            if ([7, 8, 9].includes(data.column.index)) {
+              const surcoIndex = data.column.index - 7;
+              const surcoValue = meta.surcos[surcoIndex];
+              if (Number.isFinite(surcoValue) && surcoValue <= 3) {
+                highlightCell();
+              }
+            }
+            if (data.column.index === 10 && Number.isFinite(meta.minSurco) && meta.minSurco <= 3) {
+              highlightCell();
+            }
+          }
         });
 
         doc.save(`historial_neumaticos_${generatedAt.toISOString().slice(0, 10)}.pdf`);
@@ -2299,26 +2568,60 @@
 
     function exportFilteredToExcel(records) {
       try {
-        const rows = records.map(record => {
-          const mileage = getRecordMileage(record);
-          const minSurco = getRecordMinSurco(record);
-          const kpmm = typeof record.kpmm === 'number' && Number.isFinite(record.kpmm) ? Number(record.kpmm.toFixed(2)) : '';
-
-          return {
-            'Orden': record.orderNumber || '',
-            'Sucursal': record.branchName || 'N/A',
-            'Vehículo': record.vehicleType || 'N/A',
-            'KM': mileage !== null ? mileage : '',
-            'Fecha': getRecordDateIso(record),
-            'Surco Mín (mm)': Number.isFinite(minSurco) ? Number(minSurco.toFixed(1)) : '',
-            'Rendimiento (km/mm)': kpmm
-          };
+        const tireRows = buildTireExportRows(records);
+        const header = ['Orden', 'Sucursal', 'Vehículo', 'Posición', 'Modelo', 'KM', 'Fecha', 'Surco 1 (mm)', 'Surco 2 (mm)', 'Surco 3 (mm)', 'Surco mínimo (mm)', 'Rendimiento (km/mm)', 'Comentarios', 'ID Técnico', 'Foto URL'];
+        const dataRows = tireRows.map(row => {
+          const [surco1, surco2, surco3] = row.surcos.map(value => Number.isFinite(value) ? Number(value.toFixed(1)) : '');
+          const minSurco = Number.isFinite(row.minSurco) ? Number(row.minSurco.toFixed(1)) : '';
+          const kpmm = row.kpmm !== null ? Number(row.kpmm.toFixed(2)) : '';
+          return [
+            row.order,
+            row.branch,
+            row.vehicle,
+            row.position,
+            row.tireModel || '',
+            row.mileage !== null ? row.mileage : '',
+            row.dateIso,
+            surco1,
+            surco2,
+            surco3,
+            minSurco,
+            kpmm,
+            row.comments,
+            row.technicianId,
+            row.photoURL || ''
+          ];
         });
 
-        const worksheet = XLSX.utils.json_to_sheet(rows);
+        const worksheet = XLSX.utils.aoa_to_sheet([header, ...dataRows]);
+        const highlightStyle = {
+          fill: { patternType: 'solid', fgColor: { rgb: 'FFFDE68A' } },
+          font: { color: { rgb: 'FFB91C1C' }, bold: true }
+        };
+        const surcoColumns = [7, 8, 9];
+        dataRows.forEach((_, index) => {
+          const meta = tireRows[index];
+          if (!meta) return;
+          surcoColumns.forEach((column, surcoIndex) => {
+            const value = meta.surcos[surcoIndex];
+            if (Number.isFinite(value) && value <= 3) {
+              const cellRef = XLSX.utils.encode_cell({ c: column, r: index + 1 });
+              if (worksheet[cellRef]) {
+                worksheet[cellRef].s = highlightStyle;
+              }
+            }
+          });
+          if (Number.isFinite(meta.minSurco) && meta.minSurco <= 3) {
+            const cellRef = XLSX.utils.encode_cell({ c: 10, r: index + 1 });
+            if (worksheet[cellRef]) {
+              worksheet[cellRef].s = highlightStyle;
+            }
+          }
+        });
+
         const workbook = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(workbook, worksheet, 'Historial');
-        XLSX.writeFile(workbook, `historial_neumaticos_${new Date().toISOString().slice(0, 10)}.xlsx`);
+        XLSX.writeFile(workbook, `historial_neumaticos_${new Date().toISOString().slice(0, 10)}.xlsx`, { cellStyles: true });
         displayAppMessage('Exportación a Excel completada.', 'success');
       } catch (error) {
         console.error('Error al exportar a Excel:', error);
@@ -2329,44 +2632,47 @@
     function exportFilteredToCsv(records) {
       try {
         let csvContent = 'data:text/csv;charset=utf-8,';
-        const superset = Array.from(new Set(Object.values(TIRES_STRUCTURE).flat()));
-        const headers = [
-          'Orden', 'Sucursal', 'Kilometraje', 'Fecha', 'Tipo Vehículo', 'Marca General', 'Medida', 'Comentarios', 'ID Técnico', 'Rendimiento (km/mm)',
-          ...superset.flatMap(pos => [`Modelo_${pos}`, `Surco1_${pos}`, `Surco2_${pos}`, `Surco3_${pos}`, `FotoURL_${pos}`])
-        ];
+        const headers = ['Orden', 'Sucursal', 'Vehículo', 'Posición', 'Modelo', 'KM', 'Fecha', 'Surco 1 (mm)', 'Surco 2 (mm)', 'Surco 3 (mm)', 'Surco mínimo (mm)', 'Rendimiento (km/mm)', 'Comentarios', 'ID Técnico', 'Foto URL'];
         csvContent += headers.join(';') + '\r\n';
 
-        records.forEach(record => {
-          const tireMap = (record.tires || []).reduce((acc, tire) => ({ ...acc, [tire.position]: tire }), {});
-          const mileage = getRecordMileage(record);
-          const minifiedComments = (record.generalComments || '').replace(/"/g, '""');
-          const kpmm = typeof record.kpmm === 'number' && Number.isFinite(record.kpmm) ? record.kpmm : '';
+        const tireRows = buildTireExportRows(records);
+        tireRows.forEach(row => {
+          const escape = (value) => {
+            if (value === null || value === undefined) return '';
+            const strValue = String(value);
+            if (strValue.includes(';') || strValue.includes('"') || strValue.includes('\n')) {
+              return '"' + strValue.replace(/"/g, '""') + '"';
+            }
+            return strValue;
+          };
 
-          const row = [
-            record.orderNumber || '',
-            record.branchName || 'N/A',
-            mileage !== null ? mileage : '',
-            getRecordDateIso(record),
-            record.vehicleType || '',
-            record.generalMakeModel || '',
-            record.tireSize || '',
-            `"${minifiedComments}"`,
-            record.technicianId || '',
-            kpmm,
-            ...superset.flatMap(pos => {
-              const tire = tireMap[pos];
-              if (!tire) {
-                return ['', '', '', '', ''];
-              }
-              const surco1 = tire.surco1 ?? '';
-              const surco2 = tire.surco2 ?? '';
-              const surco3 = tire.surco3 ?? '';
-              const photo = tire.photoURL && tire.photoURL !== 'N/A' ? tire.photoURL : '';
-              return [tire.makeModel || '', surco1, surco2, surco3, photo];
-            })
+          const formatSurco = (value) => {
+            if (!Number.isFinite(value)) return '';
+            const base = value.toFixed(1);
+            return value <= 3 ? `${base} ⚠️` : base;
+          };
+
+          const surcoValues = row.surcos.map(formatSurco);
+          const minSurco = Number.isFinite(row.minSurco) ? formatSurco(row.minSurco) : '';
+          const kpmm = row.kpmm !== null && Number.isFinite(row.kpmm) ? row.kpmm.toFixed(2) : '';
+
+          const csvRow = [
+            escape(row.order),
+            escape(row.branch),
+            escape(row.vehicle),
+            escape(row.position),
+            escape(row.tireModel || ''),
+            escape(row.mileage !== null ? row.mileage : ''),
+            escape(row.dateIso),
+            ...surcoValues.map(escape),
+            escape(minSurco),
+            escape(kpmm),
+            escape(row.comments),
+            escape(row.technicianId),
+            escape(row.photoURL || '')
           ];
 
-          csvContent += row.join(';') + '\r\n';
+          csvContent += csvRow.join(';') + '\r\n';
         });
 
         const encodedUri = encodeURI(csvContent);
@@ -2388,64 +2694,64 @@
     }
     
     // === INICIO DE LA APP ===
-    window.onload = function() {
+    window.onload = async function() {
       loadCatalogFromStorage();
       renderCatalogLists();
       attachOrderNumberHandlers();
-      loadFleetDataset();
+      await loadFleetDataset();
 
       const fleetFileInput = document.getElementById('fleetFileInput');
       if (fleetFileInput) {
         fleetFileInput.addEventListener('change', handleFleetFileSelection);
       }
 
-      initializeAppCore().then(() => {
-        const branchSelect = document.getElementById('branchName');
-        if (branchSelect) {
-          branchSelect.innerHTML = '<option value="" disabled selected>Selecciona una sucursal...</option>' + BRANCHES.map(branch => `<option value="${branch}">${branch}</option>`).join('');
-        }
+      await initializeAppCore();
 
-        refreshCatalogSelects();
+      const branchSelect = document.getElementById('branchName');
+      if (branchSelect) {
+        branchSelect.innerHTML = '<option value="" disabled selected>Selecciona una sucursal...</option>' + BRANCHES.map(branch => `<option value="${branch}">${branch}</option>`).join('');
+      }
 
-        updateFleetDatasetSummary();
-        renderFleetDashboard(fleetEntries);
+      refreshCatalogSelects();
 
-        const exportMenuButton = document.getElementById('exportMenuButton');
-        const exportMenu = document.getElementById('exportMenu');
-        if (exportMenuButton && exportMenu) {
-          const toggleMenu = (shouldShow) => {
-            if (shouldShow) {
-              exportMenu.classList.remove('hidden');
-              exportMenuButton.setAttribute('aria-expanded', 'true');
-            } else {
-              exportMenu.classList.add('hidden');
-              exportMenuButton.setAttribute('aria-expanded', 'false');
-            }
-          };
+      updateFleetDatasetSummary();
+      renderFleetDashboard(fleetEntries);
 
-          exportMenuButton.addEventListener('click', (event) => {
+      const exportMenuButton = document.getElementById('exportMenuButton');
+      const exportMenu = document.getElementById('exportMenu');
+      if (exportMenuButton && exportMenu) {
+        const toggleMenu = (shouldShow) => {
+          if (shouldShow) {
+            exportMenu.classList.remove('hidden');
+            exportMenuButton.setAttribute('aria-expanded', 'true');
+          } else {
+            exportMenu.classList.add('hidden');
+            exportMenuButton.setAttribute('aria-expanded', 'false');
+          }
+        };
+
+        exportMenuButton.addEventListener('click', (event) => {
+          event.stopPropagation();
+          const shouldShow = exportMenu.classList.contains('hidden');
+          toggleMenu(shouldShow);
+        });
+
+        document.addEventListener('click', (event) => {
+          if (!exportMenu.contains(event.target) && !exportMenuButton.contains(event.target) && !exportMenu.classList.contains('hidden')) {
+            toggleMenu(false);
+          }
+        });
+
+        exportMenu.querySelectorAll('button[data-export]').forEach(button => {
+          button.addEventListener('click', (event) => {
             event.stopPropagation();
-            const shouldShow = exportMenu.classList.contains('hidden');
-            toggleMenu(shouldShow);
+            toggleMenu(false);
+            exportFilteredData(button.dataset.export);
           });
+        });
+      }
 
-          document.addEventListener('click', (event) => {
-            if (!exportMenu.contains(event.target) && !exportMenuButton.contains(event.target) && !exportMenu.classList.contains('hidden')) {
-              toggleMenu(false);
-            }
-          });
-
-          exportMenu.querySelectorAll('button[data-export]').forEach(button => {
-            button.addEventListener('click', (event) => {
-              event.stopPropagation();
-              toggleMenu(false);
-              exportFilteredData(button.dataset.export);
-            });
-          });
-        }
-
-        window.switchTab('guide');
-      });
+      window.switchTab('guide');
     }
   </script>
 </head>
@@ -2471,6 +2777,7 @@
           <div class="flex space-x-4 sm:space-x-8 -mb-px">
             <button id="tab-button-guide" onclick="switchTab('guide')" type="button" class="tab-button">Guía Rápida</button>
             <button id="tab-button-register" onclick="switchTab('register')" type="button" class="tab-button">Registrar</button>
+            <button id="tab-button-maintenance" onclick="switchTab('maintenance')" type="button" class="tab-button">Mant. Preventiva</button>
             <button id="tab-button-records" onclick="switchTab('records')" type="button" class="tab-button">Historial</button>
             <button id="tab-button-admin" onclick="switchTab('admin')" type="button" class="tab-button hidden" data-creator-tab>Catálogo</button>
             <!-- Para habilitar el acceso privado, elimina la clase "hidden" del botón Catálogo desde las herramientas del navegador. -->
@@ -2574,6 +2881,85 @@
         </form>
       </div>
 
+      <div id="tab-content-maintenance" class="hidden">
+        <div class="space-y-8">
+          <section class="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+            <h2 class="text-2xl font-bold text-gray-800">Mantenciones preventivas en línea</h2>
+            <p class="mt-2 text-sm text-gray-600">Monitorea el estado de la flota y automatiza la forma en que se mantiene actualizada la planilla de control.</p>
+            <div class="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <article class="p-5 border border-emerald-100 rounded-xl bg-emerald-50/40">
+                <h3 class="text-lg font-semibold text-emerald-700">Opciones para actualizar el Excel en línea</h3>
+                <ul class="mt-3 space-y-2 text-sm text-emerald-900">
+                  <li class="flex items-start gap-2"><span class="mt-1 inline-flex w-2 h-2 rounded-full bg-emerald-500"></span><span><strong>Google Sheets + Apps Script:</strong> sube la planilla a Google Drive y expone una <em>Web App</em> que devuelva el Excel actualizado. Luego copia el enlace en <code>FLEET_REMOTE_DATA_URL</code> para que la app siempre descargue la versión vigente.</span></li>
+                  <li class="flex items-start gap-2"><span class="mt-1 inline-flex w-2 h-2 rounded-full bg-emerald-500"></span><span><strong>Automatizaciones (Power Automate / Zapier):</strong> crea un flujo que observe tu ERP o formulario de mantenciones y cargue automáticamente un nuevo archivo en Firebase Storage reemplazando el existente.</span></li>
+                  <li class="flex items-start gap-2"><span class="mt-1 inline-flex w-2 h-2 rounded-full bg-emerald-500"></span><span><strong>Cloud Functions en Firebase:</strong> programa una función que consulte la base origen (API o base SQL) y genere el Excel con la librería <code>xlsx</code>. Guarda el archivo en el mismo bucket para que el dashboard lo detecte al recargar.</span></li>
+                </ul>
+              </article>
+              <article class="p-5 border border-amber-100 rounded-xl bg-amber-50/40">
+                <h3 class="text-lg font-semibold text-amber-700">Cómo respaldar modelos y medidas en Firebase</h3>
+                <ol class="mt-3 space-y-2 text-sm text-amber-900 list-decimal list-inside">
+                  <li>Agrega nuevos modelos o medidas desde la pestaña <strong>Catálogo</strong>.</li>
+                  <li>La aplicación guardará automáticamente los datos en Firestore y mostrará la confirmación <em>“respaldado en Firebase”</em>.</li>
+                  <li>Cuando necesites restaurarlos en otro equipo, usa el botón <strong>“Restaurar último respaldo”</strong> del mismo panel.</li>
+                </ol>
+                <p class="mt-3 text-xs text-amber-700">Si prefieres un respaldo manual, utiliza los botones del panel de Catálogo para sincronizar o recuperar el contenido.</p>
+              </article>
+            </div>
+          </section>
+
+          <section id="dashboardSection" class="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+            <div class="flex flex-wrap items-start justify-between gap-4">
+              <h3 class="text-2xl font-bold text-gray-800">Dashboard de Mantenciones Preventivas</h3>
+              <span id="dashboardUpdatedAt" class="text-sm text-gray-500"></span>
+            </div>
+            <p class="text-sm text-gray-600 mt-2">Los indicadores se actualizan con el último Excel cargado desde el catálogo privado.</p>
+            <div id="dashboardEmptyState" class="mt-6 p-6 bg-gray-50 border border-dashed border-gray-300 rounded-lg text-sm text-gray-500">
+              Aún no hay datos cargados. Importa la planilla de flota para visualizar el estado de las mantenciones.
+            </div>
+            <div id="dashboardContent" class="mt-6 hidden">
+              <div id="dashboardSummary"></div>
+              <div class="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div class="bg-white border border-gray-200 rounded-lg shadow-sm p-4">
+                  <div class="flex flex-col gap-4">
+                    <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+                      <h4 class="text-lg font-semibold text-gray-700">Estado de mantención</h4>
+                      <div class="flex flex-wrap items-center gap-3">
+                        <label for="dashboardBranchFilter" class="text-xs font-medium text-gray-600 uppercase tracking-wide">Sucursal</label>
+                        <select id="dashboardBranchFilter" class="filter-input bg-white w-auto min-w-[9rem]"></select>
+                        <label for="dashboardVehicleFilter" class="text-xs font-medium text-gray-600 uppercase tracking-wide">Vehículo</label>
+                        <select id="dashboardVehicleFilter" class="filter-input bg-white w-auto min-w-[9rem]"></select>
+                      </div>
+                    </div>
+                    <div id="dashboardStatusFilters" class="flex flex-wrap gap-2"></div>
+                  </div>
+                  <div class="mt-4 h-64">
+                    <canvas id="maintenanceStatusChart"></canvas>
+                  </div>
+                </div>
+                <div class="bg-white border border-gray-200 rounded-lg shadow-sm p-4">
+                  <h4 class="text-lg font-semibold text-gray-700">Prioridad de intervención</h4>
+                  <p class="text-xs text-gray-500 mb-4">Ordenado por kilómetros restantes para la próxima mantención preventiva.</p>
+                  <div class="overflow-y-auto max-h-72">
+                    <table class="min-w-full text-sm">
+                      <thead>
+                        <tr class="text-left text-xs uppercase tracking-wide text-gray-500 border-b">
+                          <th class="px-2 py-2">Orden</th>
+                          <th class="px-2 py-2">Patente</th>
+                          <th class="px-2 py-2">Falta</th>
+                          <th class="px-2 py-2">Estado</th>
+                          <th class="px-2 py-2">Última Mantención</th>
+                        </tr>
+                      </thead>
+                      <tbody id="dashboardDetailBody"></tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+
       <div id="tab-content-admin" class="hidden">
         <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
           <h2 class="text-xl font-bold text-gray-800 mb-2">Catálogo privado de neumáticos</h2>
@@ -2602,6 +2988,14 @@
             <div id="customSizeList" class="flex flex-wrap gap-2"></div>
           </div>
           <p class="mt-6 text-xs text-gray-400">Los datos se almacenan localmente en este navegador. Exporta la lista si deseas respaldarla.</p>
+          <div class="mt-4 flex flex-wrap items-center gap-2">
+            <button type="button" onclick="syncCatalogToFirebase()" class="px-4 py-2 bg-emerald-600 text-white text-sm font-semibold rounded-lg shadow-sm hover:bg-emerald-700 transition">
+              Sincronizar catálogo con Firebase
+            </button>
+            <button type="button" onclick="restoreCatalogFromFirebase()" class="px-4 py-2 bg-white border border-emerald-200 text-emerald-700 text-sm font-semibold rounded-lg shadow-sm hover:bg-emerald-50 transition">
+              Restaurar último respaldo
+            </button>
+          </div>
           <div class="mt-10 border-t border-dashed border-gray-200 pt-6">
             <div class="flex items-center justify-between flex-wrap gap-2">
               <h3 class="text-lg font-semibold text-gray-700">Catálogo de flota (Excel)</h3>
@@ -2713,51 +3107,6 @@
             </table>
         </div>
       </div>
-
-      <section id="dashboardSection" class="mt-16">
-        <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-          <div class="flex flex-wrap items-start justify-between gap-4">
-            <h2 class="text-2xl font-bold text-gray-800">Dashboard de Mantenciones Preventivas</h2>
-            <span id="dashboardUpdatedAt" class="text-sm text-gray-500"></span>
-          </div>
-          <p class="text-sm text-gray-600 mt-2">Los indicadores se actualizan con el último Excel cargado desde el catálogo privado.</p>
-          <div id="dashboardEmptyState" class="mt-6 p-6 bg-gray-50 border border-dashed border-gray-300 rounded-lg text-sm text-gray-500">
-            Aún no hay datos cargados. Importa la planilla de flota para visualizar el estado de las mantenciones.
-          </div>
-          <div id="dashboardContent" class="mt-6 hidden">
-            <div id="dashboardSummary"></div>
-            <div class="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <div class="bg-white border border-gray-200 rounded-lg shadow-sm p-4">
-                <div class="flex items-center justify-between gap-4">
-                  <h3 class="text-lg font-semibold text-gray-700">Estado de mantención</h3>
-                  <div id="dashboardStatusFilters" class="flex flex-wrap gap-2"></div>
-                </div>
-                <div class="mt-4 h-64">
-                  <canvas id="maintenanceStatusChart"></canvas>
-                </div>
-              </div>
-              <div class="bg-white border border-gray-200 rounded-lg shadow-sm p-4">
-                <h3 class="text-lg font-semibold text-gray-700">Prioridad de intervención</h3>
-                <p class="text-xs text-gray-500 mb-4">Ordenado por kilómetros restantes para la próxima mantención preventiva.</p>
-                <div class="overflow-y-auto max-h-72">
-                  <table class="min-w-full text-sm">
-                    <thead>
-                      <tr class="text-left text-xs uppercase tracking-wide text-gray-500 border-b">
-                        <th class="px-2 py-2">Orden</th>
-                        <th class="px-2 py-2">Patente</th>
-                        <th class="px-2 py-2">Falta</th>
-                        <th class="px-2 py-2">Estado</th>
-                        <th class="px-2 py-2">Última Mantención</th>
-                      </tr>
-                    </thead>
-                    <tbody id="dashboardDetailBody"></tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
 
     </main>
   </div>
