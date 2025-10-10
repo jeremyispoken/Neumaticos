@@ -89,6 +89,10 @@
       'BRIDGESTONE M840', 'TRACMAX GRT 901','FIREMAX FM188', 'MAXZEZ MA266', 'ROADX RXQUEST H/T01', 'TRACMAX XPRIVILO A/T'
     ];
     const PREDEFINED_SIZES = ['225/75R16', '245/70R19.5', '275/80R22.5', '295/80R22.5', '315/80R22.5', '11R22.5', '12R22.5', '10.00R20'];
+    const MEASUREMENT_TYPES = {
+      NEW: 'nuevo',
+      CONTROL: 'control',
+    };
     const FLEET_SHEET_NAME = 'Flota Verschae';
     const FLEET_DATA_STORAGE_KEY = 'flota-track-fleet-dataset-v1';
     const FLEET_DATA_META_STORAGE_KEY = 'flota-track-fleet-dataset-meta-v1';
@@ -149,6 +153,48 @@
     function normalizeOrderKey(value) {
       if (value === null || value === undefined) return '';
       return String(value).trim().toUpperCase().replace(/\s+/g, '');
+    }
+
+    function updateTopPerformers(records) {
+      const tableBody = document.getElementById('topPerformersTableBody');
+      if (!tableBody) return;
+
+      const workingRecords = Array.isArray(records) ? records : [];
+      const aggregated = new Map();
+
+      workingRecords.forEach(record => {
+        if (normalizeMeasurementType(record.measurementType, { fallback: MEASUREMENT_TYPES.CONTROL }) !== MEASUREMENT_TYPES.CONTROL) {
+          return;
+        }
+        const kpmm = typeof record.kpmm === 'number' && Number.isFinite(record.kpmm) ? record.kpmm : null;
+        if (kpmm === null) return;
+        const makeModel = (record.generalMakeModel || 'N/A').trim() || 'N/A';
+        const tireSize = (record.tireSize || 'N/A').trim() || 'N/A';
+        const key = `${makeModel}__${tireSize}`;
+        const stats = aggregated.get(key) || { makeModel, tireSize, total: 0, count: 0 };
+        stats.total += kpmm;
+        stats.count += 1;
+        aggregated.set(key, stats);
+      });
+
+      const ranked = Array.from(aggregated.values())
+        .map(entry => ({ ...entry, average: entry.total / entry.count }))
+        .sort((a, b) => b.average - a.average)
+        .slice(0, 5);
+
+      if (!ranked.length) {
+        tableBody.innerHTML = '<tr><td colspan="5" class="px-3 py-4 text-center text-sm text-gray-500">Aún no hay registros de control con KPIs calculados para mostrar.</td></tr>';
+        return;
+      }
+
+      tableBody.innerHTML = ranked.map((entry, index) => `
+        <tr class="border-b last:border-0">
+          <td class="px-3 py-2 text-sm text-gray-500">${index + 1}</td>
+          <td class="px-3 py-2 text-sm font-semibold text-gray-700">${entry.makeModel}</td>
+          <td class="px-3 py-2 text-sm text-gray-600">${entry.tireSize}</td>
+          <td class="px-3 py-2 text-sm font-semibold text-gray-900">${Math.round(entry.average).toLocaleString('es-CL')}</td>
+          <td class="px-3 py-2 text-xs text-gray-500">${entry.count} registro${entry.count === 1 ? '' : 's'}</td>
+        </tr>`).join('');
     }
 
     function findColumnIndex(headers, keywords, fallbackIndex) {
@@ -252,6 +298,30 @@
         console.warn('No se pudo cargar el catálogo personalizado:', error);
         customModels = [];
         customSizes = [];
+      }
+    }
+
+    function normalizeMeasurementType(value, { fallback = MEASUREMENT_TYPES.CONTROL } = {}) {
+      if (typeof value !== 'string') {
+        return fallback;
+      }
+      const normalized = value.trim().toLowerCase();
+      if (normalized.includes('nuevo') || normalized.includes('ingreso')) {
+        return MEASUREMENT_TYPES.NEW;
+      }
+      if (normalized.includes('control')) {
+        return MEASUREMENT_TYPES.CONTROL;
+      }
+      return fallback;
+    }
+
+    function getMeasurementTypeLabel(type) {
+      switch (type) {
+        case MEASUREMENT_TYPES.NEW:
+          return 'Ingreso (neumáticos nuevos)';
+        case MEASUREMENT_TYPES.CONTROL:
+        default:
+          return 'Control';
       }
     }
 
@@ -1402,7 +1472,12 @@
       unsubscribeRecords = onSnapshot(q, (snapshot) => {
         const records = [];
         snapshot.forEach((doc) => records.push({ id: doc.id, ...doc.data() }));
-        window.currentRecords = records.sort((a, b) => new Date(b.date) - new Date(a.date));
+        window.currentRecords = records
+          .map(record => ({
+            ...record,
+            measurementType: normalizeMeasurementType(record.measurementType, { fallback: MEASUREMENT_TYPES.CONTROL }),
+          }))
+          .sort((a, b) => new Date(b.date) - new Date(a.date));
         
         const branchFilter = document.getElementById('branchFilter');
         const branchColumnFilter = document.getElementById('branchColumnFilter');
@@ -1851,39 +1926,76 @@
             return acc;
         }, {});
 
-        for (const orderNumber in vehicleGroups) {
-            const group = vehicleGroups[orderNumber].sort((a, b) => a.mileage - b.mileage);
+        const getAvgMinTread = (r) => {
+            if (!r.tires || r.tires.length === 0) return 0;
+            const minTreads = r.tires.map(t => Math.min(t.surco1, t.surco2, t.surco3));
+            return minTreads.reduce((sum, val) => sum + val, 0) / minTreads.length;
+        };
+
+        const sortedKeys = Object.keys(vehicleGroups);
+        sortedKeys.forEach(orderNumber => {
+            const group = vehicleGroups[orderNumber]
+                .map(entry => ({
+                    ...entry,
+                    measurementType: normalizeMeasurementType(entry.measurementType, { fallback: MEASUREMENT_TYPES.CONTROL }),
+                }))
+                .sort((a, b) => {
+                    const mileageA = getRecordMileage(a);
+                    const mileageB = getRecordMileage(b);
+                    if (mileageA === null && mileageB === null) return 0;
+                    if (mileageA === null) return -1;
+                    if (mileageB === null) return 1;
+                    if (mileageA === mileageB) {
+                        return new Date(a.date) - new Date(b.date);
+                    }
+                    return mileageA - mileageB;
+                });
 
             for (let i = 0; i < group.length; i++) {
                 const currentRecord = { ...group[i] };
-                if (i > 0) {
-                    const prevRecord = group[i - 1];
-                    const kmDiff = currentRecord.mileage - prevRecord.mileage;
+                const currentMileage = getRecordMileage(currentRecord);
 
-                    const getAvgMinTread = (r) => {
-                        if (!r.tires || r.tires.length === 0) return 0;
-                        const minTreads = r.tires.map(t => Math.min(t.surco1, t.surco2, t.surco3));
-                        return minTreads.reduce((sum, val) => sum + val, 0) / minTreads.length;
-                    };
+                if (currentRecord.measurementType !== MEASUREMENT_TYPES.CONTROL || currentMileage === null) {
+                    currentRecord.kpmm = null;
+                    recordsWithKpi.push(currentRecord);
+                    continue;
+                }
 
-                    const prevAvgTread = getAvgMinTread(prevRecord);
-                    const currentAvgTread = getAvgMinTread(currentRecord);
-                    const wearDiff = prevAvgTread - currentAvgTread;
-
-                    if (kmDiff > 0 && wearDiff > 0) {
-                        currentRecord.kpmm = Math.round(kmDiff / wearDiff);
-                    } else {
-                        currentRecord.kpmm = null;
+                let previousComparableRecord = null;
+                for (let j = i - 1; j >= 0; j--) {
+                    const candidate = group[j];
+                    const candidateMileage = getRecordMileage(candidate);
+                    if (candidateMileage === null) continue;
+                    if (candidateMileage < currentMileage) {
+                        previousComparableRecord = candidate;
+                        break;
                     }
+                }
+
+                if (!previousComparableRecord) {
+                    currentRecord.kpmm = null;
+                    recordsWithKpi.push(currentRecord);
+                    continue;
+                }
+
+                const prevMileage = getRecordMileage(previousComparableRecord);
+                const kmDiff = prevMileage !== null ? currentMileage - prevMileage : 0;
+                const prevAvgTread = getAvgMinTread(previousComparableRecord);
+                const currentAvgTread = getAvgMinTread(currentRecord);
+                const wearDiff = prevAvgTread - currentAvgTread;
+
+                if (kmDiff > 0 && wearDiff > 0) {
+                    currentRecord.kpmm = Math.round(kmDiff / wearDiff);
                 } else {
                     currentRecord.kpmm = null;
                 }
+
                 recordsWithKpi.push(currentRecord);
             }
-        }
-        
+        });
+
         const categoryKpis = recordsWithKpi.reduce((acc, record) => {
-            if (record.kpmm !== null && record.vehicleType) {
+            if (record.kpmm !== null && record.vehicleType && record.measurementType === MEASUREMENT_TYPES.CONTROL) {
                 if (!acc[record.vehicleType]) acc[record.vehicleType] = [];
                 acc[record.vehicleType].push(record.kpmm);
             }
@@ -1935,7 +2047,7 @@
     }
 
     window.switchTab = function(tabName) {
-      ['guide', 'register', 'maintenance', 'records', 'admin'].forEach(tab => {
+      ['guide', 'register', 'records', 'maintenance', 'admin'].forEach(tab => {
         document.getElementById(`tab-button-${tab}`)?.classList.toggle('active', tab === tabName);
         document.getElementById(`tab-content-${tab}`)?.classList.toggle('hidden', tab !== tabName);
       });
@@ -1964,6 +2076,8 @@
       if (saveBtn) saveBtn.disabled = true;
       const reviewBtn = document.getElementById('reviewButton');
       if (reviewBtn) reviewBtn.disabled = true;
+      const measurementSelect = document.getElementById('measurementType');
+      if (measurementSelect) measurementSelect.value = MEASUREMENT_TYPES.CONTROL;
       const dateEl = document.getElementById('date');
       if (dateEl) dateEl.value = new Date().toISOString().slice(0, 10);
       resetOrderAutofill();
@@ -2026,7 +2140,7 @@
         const formData = new FormData(form);
         const generalData = Object.fromEntries(formData.entries());
 
-        const requiredFields = ['branchName', 'orderNumber', 'mileage', 'date', 'tireSize', 'makeModel'];
+        const requiredFields = ['branchName', 'orderNumber', 'mileage', 'date', 'tireSize', 'makeModel', 'measurementType'];
         if (requiredFields.some(field => !generalData[field])) {
             displayReview([{type: 'error', text: 'Completa todos los campos generales (Sucursal, Orden, KM, Fecha, etc.).'}]);
             finishReview(reviewBtn);
@@ -2058,6 +2172,13 @@
             return;
         }
 
+        const measurementTypeValue = normalizeMeasurementType(generalData.measurementType, { fallback: '' });
+        if (!measurementTypeValue) {
+            displayReview([{type: 'error', text: 'Selecciona si el registro corresponde a un ingreso de neumáticos nuevos o a un control.'}]);
+            finishReview(reviewBtn);
+            return;
+        }
+
         const data = {
             orderNumber: orderDisplay,
             orderNumberNormalized: normalizedOrder,
@@ -2070,6 +2191,7 @@
             technicianId: currentUserId,
             branchName: generalData.branchName,
             vehiclePlate,
+            measurementType: measurementTypeValue,
             tires: [],
             photoFiles: []
         };
@@ -2109,7 +2231,10 @@
             return;
         }
 
-        if (reviewMessages.length === 0) {
+        const hadMessages = reviewMessages.length > 0;
+        reviewMessages.unshift({ type: 'success', text: `Tipo de registro seleccionado: <strong>${getMeasurementTypeLabel(measurementTypeValue)}</strong>.` });
+
+        if (!hadMessages) {
             reviewMessages.push({type: 'success', text: '✅ Todos los neumáticos en buen estado. Listo para guardar.'});
         }
         
@@ -2247,6 +2372,7 @@
       const dateFilter = document.getElementById('dateFilter');
       const surcoFilter = document.getElementById('surcoFilter');
       const kpmmFilter = document.getElementById('kpmmFilter');
+      const measurementTypeFilter = document.getElementById('measurementTypeFilter');
 
       return {
         branch: branchFilter ? branchFilter.value : 'all',
@@ -2256,7 +2382,8 @@
         km: kmFilter ? kmFilter.value.trim() : '',
         date: dateFilter ? dateFilter.value : '',
         surco: surcoFilter ? surcoFilter.value.trim() : '',
-        kpmm: kpmmFilter ? kpmmFilter.value.trim() : ''
+        kpmm: kpmmFilter ? kpmmFilter.value.trim() : '',
+        measurementType: measurementTypeFilter ? measurementTypeFilter.value : '',
       };
     }
 
@@ -2267,6 +2394,7 @@
       const normalizedKmText = filters.km.toLowerCase();
       const normalizedSurco = filters.surco.replace(',', '.').trim();
       const normalizedKpmm = filters.kpmm.replace(',', '.').trim();
+      const normalizedMeasurementType = normalizeMeasurementType(filters.measurementType, { fallback: '' });
 
       return records.filter(record => {
         const orderStr = `${record.orderNumber ?? ''}`.toLowerCase();
@@ -2280,6 +2408,10 @@
         }
 
         if (filters.branchColumn && !branchName.includes(normalizedBranchColumn)) {
+          return false;
+        }
+
+        if (normalizedMeasurementType && normalizeMeasurementType(record.measurementType, { fallback: MEASUREMENT_TYPES.CONTROL }) !== normalizedMeasurementType) {
           return false;
         }
 
@@ -2343,7 +2475,8 @@
       const container = document.getElementById('recordsTableBody');
       if (!container) return;
       if (!records.length) {
-        container.innerHTML = '<tr><td colspan="8" class="text-center py-8 text-gray-500">No hay registros para este filtro.</td></tr>';
+        container.innerHTML = '<tr><td colspan="9" class="text-center py-8 text-gray-500">No hay registros para este filtro.</td></tr>';
+        updateTopPerformers([]);
         return;
       }
       container.innerHTML = records.map(record => {
@@ -2382,11 +2515,20 @@
           kpmmCell = `<td class="px-4 py-3 whitespace-nowrap text-sm font-semibold ${colorClass}">${kpmm.toLocaleString('es-CL')}</td>`;
         }
 
+        const measurementType = normalizeMeasurementType(record.measurementType, { fallback: MEASUREMENT_TYPES.CONTROL });
+        const measurementLabel = getMeasurementTypeLabel(measurementType);
+        const typeClasses = measurementType === MEASUREMENT_TYPES.NEW
+          ? 'bg-sky-100 text-sky-700'
+          : 'bg-emerald-100 text-emerald-700';
+
         return `
           <tr class="border-b hover:bg-gray-50 transition">
             <td class="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">${record.orderNumber}</td>
             <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-600 font-semibold">${record.branchName || 'N/A'}</td>
             <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${record.vehicleType}</td>
+            <td class="px-4 py-3 whitespace-nowrap text-sm">
+              <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold ${typeClasses}">${measurementLabel}</span>
+            </td>
             <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${mileageDisplay}</td>
             <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${dateStr}</td>
             <td class="px-4 py-3 whitespace-nowrap text-sm ${criticalClass}">${hasSurcoData ? `${minSurco.toFixed(1)} mm` : '-'}</td>
@@ -2407,11 +2549,13 @@
             </td>
           </tr>`;
       }).join('');
+      updateTopPerformers(records);
     }
 
     function formatRecordForPrompt(record) {
       let detail = `Sucursal: ${record.branchName || "N/A"}\n`;
       detail += `Tipo Vehículo: ${record.vehicleType}\n`;
+      detail += `Tipo de Registro: ${getMeasurementTypeLabel(normalizeMeasurementType(record.measurementType, { fallback: MEASUREMENT_TYPES.CONTROL }))}\n`;
       detail += `Medida General: ${record.tireSize || 'N/A'}\n`;
       detail += `Marca/Modelo General: ${record.generalMakeModel}\n`;
       detail += `Comentarios: "${record.generalComments || 'Ninguno'}"\n\n`;
@@ -2460,6 +2604,7 @@
           order: record.orderNumber || '',
           branch: record.branchName || 'N/A',
           vehicle: record.vehicleType || 'N/A',
+          measurementType: getMeasurementTypeLabel(normalizeMeasurementType(record.measurementType, { fallback: MEASUREMENT_TYPES.CONTROL })),
           mileage,
           dateDisplay: getRecordDateDisplay(record),
           dateIso: getRecordDateIso(record),
@@ -2516,6 +2661,7 @@
             row.order,
             row.branch,
             row.vehicle,
+            row.measurementType,
             row.position,
             row.tireModel || '-',
             row.mileage !== null ? row.mileage.toLocaleString('es-CL') : '-',
@@ -2530,7 +2676,7 @@
 
         doc.autoTable({
           startY: 28,
-          head: [['Orden', 'Sucursal', 'Vehículo', 'Posición', 'Modelo', 'KM', 'Fecha', 'Surco 1 (mm)', 'Surco 2 (mm)', 'Surco 3 (mm)', 'Surco mín. (mm)', 'Rendimiento (km/mm)']],
+          head: [['Orden', 'Sucursal', 'Vehículo', 'Tipo Registro', 'Posición', 'Modelo', 'KM', 'Fecha', 'Surco 1 (mm)', 'Surco 2 (mm)', 'Surco 3 (mm)', 'Surco mín. (mm)', 'Rendimiento (km/mm)']],
           body: tableRows,
           styles: { fontSize: 8 },
           headStyles: { fillColor: [5, 150, 105], textColor: 255 },
@@ -2545,14 +2691,14 @@
               data.cell.styles.textColor = [185, 28, 28];
               data.cell.styles.fontStyle = 'bold';
             };
-            if ([7, 8, 9].includes(data.column.index)) {
-              const surcoIndex = data.column.index - 7;
+            if ([8, 9, 10].includes(data.column.index)) {
+              const surcoIndex = data.column.index - 8;
               const surcoValue = meta.surcos[surcoIndex];
               if (Number.isFinite(surcoValue) && surcoValue <= 3) {
                 highlightCell();
               }
             }
-            if (data.column.index === 10 && Number.isFinite(meta.minSurco) && meta.minSurco <= 3) {
+            if (data.column.index === 11 && Number.isFinite(meta.minSurco) && meta.minSurco <= 3) {
               highlightCell();
             }
           }
@@ -2569,7 +2715,7 @@
     function exportFilteredToExcel(records) {
       try {
         const tireRows = buildTireExportRows(records);
-        const header = ['Orden', 'Sucursal', 'Vehículo', 'Posición', 'Modelo', 'KM', 'Fecha', 'Surco 1 (mm)', 'Surco 2 (mm)', 'Surco 3 (mm)', 'Surco mínimo (mm)', 'Rendimiento (km/mm)', 'Comentarios', 'ID Técnico', 'Foto URL'];
+        const header = ['Orden', 'Sucursal', 'Vehículo', 'Tipo Registro', 'Posición', 'Modelo', 'KM', 'Fecha', 'Surco 1 (mm)', 'Surco 2 (mm)', 'Surco 3 (mm)', 'Surco mínimo (mm)', 'Rendimiento (km/mm)', 'Comentarios', 'ID Técnico', 'Foto URL'];
         const dataRows = tireRows.map(row => {
           const [surco1, surco2, surco3] = row.surcos.map(value => Number.isFinite(value) ? Number(value.toFixed(1)) : '');
           const minSurco = Number.isFinite(row.minSurco) ? Number(row.minSurco.toFixed(1)) : '';
@@ -2578,6 +2724,7 @@
             row.order,
             row.branch,
             row.vehicle,
+            row.measurementType,
             row.position,
             row.tireModel || '',
             row.mileage !== null ? row.mileage : '',
@@ -2598,7 +2745,7 @@
           fill: { patternType: 'solid', fgColor: { rgb: 'FFFDE68A' } },
           font: { color: { rgb: 'FFB91C1C' }, bold: true }
         };
-        const surcoColumns = [7, 8, 9];
+        const surcoColumns = [8, 9, 10];
         dataRows.forEach((_, index) => {
           const meta = tireRows[index];
           if (!meta) return;
@@ -2612,7 +2759,7 @@
             }
           });
           if (Number.isFinite(meta.minSurco) && meta.minSurco <= 3) {
-            const cellRef = XLSX.utils.encode_cell({ c: 10, r: index + 1 });
+            const cellRef = XLSX.utils.encode_cell({ c: 11, r: index + 1 });
             if (worksheet[cellRef]) {
               worksheet[cellRef].s = highlightStyle;
             }
@@ -2632,7 +2779,7 @@
     function exportFilteredToCsv(records) {
       try {
         let csvContent = 'data:text/csv;charset=utf-8,';
-        const headers = ['Orden', 'Sucursal', 'Vehículo', 'Posición', 'Modelo', 'KM', 'Fecha', 'Surco 1 (mm)', 'Surco 2 (mm)', 'Surco 3 (mm)', 'Surco mínimo (mm)', 'Rendimiento (km/mm)', 'Comentarios', 'ID Técnico', 'Foto URL'];
+        const headers = ['Orden', 'Sucursal', 'Vehículo', 'Tipo Registro', 'Posición', 'Modelo', 'KM', 'Fecha', 'Surco 1 (mm)', 'Surco 2 (mm)', 'Surco 3 (mm)', 'Surco mínimo (mm)', 'Rendimiento (km/mm)', 'Comentarios', 'ID Técnico', 'Foto URL'];
         csvContent += headers.join(';') + '\r\n';
 
         const tireRows = buildTireExportRows(records);
@@ -2660,6 +2807,7 @@
             escape(row.order),
             escape(row.branch),
             escape(row.vehicle),
+            escape(row.measurementType),
             escape(row.position),
             escape(row.tireModel || ''),
             escape(row.mileage !== null ? row.mileage : ''),
@@ -2694,18 +2842,23 @@
     }
     
     // === INICIO DE LA APP ===
-    window.onload = async function() {
+    window.addEventListener('load', () => {
       loadCatalogFromStorage();
       renderCatalogLists();
       attachOrderNumberHandlers();
-      await loadFleetDataset();
 
       const fleetFileInput = document.getElementById('fleetFileInput');
       if (fleetFileInput) {
         fleetFileInput.addEventListener('change', handleFleetFileSelection);
       }
 
-      await initializeAppCore();
+      loadFleetDataset().catch(error => {
+        console.error('Error al cargar la planilla de flota al iniciar:', error);
+      });
+
+      initializeAppCore().catch(error => {
+        console.error('Error al iniciar la aplicación:', error);
+      });
 
       const branchSelect = document.getElementById('branchName');
       if (branchSelect) {
@@ -2713,7 +2866,6 @@
       }
 
       refreshCatalogSelects();
-
       updateFleetDatasetSummary();
       renderFleetDashboard(fleetEntries);
 
@@ -2752,7 +2904,7 @@
       }
 
       window.switchTab('guide');
-    }
+    });
   </script>
 </head>
 
@@ -2777,8 +2929,8 @@
           <div class="flex space-x-4 sm:space-x-8 -mb-px">
             <button id="tab-button-guide" onclick="switchTab('guide')" type="button" class="tab-button">Guía Rápida</button>
             <button id="tab-button-register" onclick="switchTab('register')" type="button" class="tab-button">Registrar</button>
-            <button id="tab-button-maintenance" onclick="switchTab('maintenance')" type="button" class="tab-button">Mant. Preventiva</button>
             <button id="tab-button-records" onclick="switchTab('records')" type="button" class="tab-button">Historial</button>
+            <button id="tab-button-maintenance" onclick="switchTab('maintenance')" type="button" class="tab-button">Mant. Preventiva</button>
             <button id="tab-button-admin" onclick="switchTab('admin')" type="button" class="tab-button hidden" data-creator-tab>Catálogo</button>
             <!-- Para habilitar el acceso privado, elimina la clase "hidden" del botón Catálogo desde las herramientas del navegador. -->
           </div>
@@ -2844,6 +2996,13 @@
                 <label for="makeModel" class="block text-sm font-medium text-gray-700 mb-1">Marca/Modelo General</label>
                 <select id="makeModel" name="makeModel" class="form-control" required><option value="" disabled selected>Selecciona una marca...</option></select>
               </div>
+              <div>
+                <label for="measurementType" class="block text-sm font-medium text-gray-700 mb-1">Tipo de Registro</label>
+                <select id="measurementType" name="measurementType" class="form-control" required>
+                  <option value="control" selected>Control</option>
+                  <option value="nuevo">Ingreso de neumáticos nuevos</option>
+                </select>
+              </div>
                <div class="md:col-span-2">
                 <label for="generalComments" class="block text-sm font-medium text-gray-700 mb-1">Comentarios Generales</label>
                 <textarea id="generalComments" name="generalComments" rows="2" class="form-control" placeholder="Observaciones sobre el vehículo, alineación, etc."></textarea>
@@ -2881,6 +3040,121 @@
         </form>
       </div>
 
+      <div id="tab-content-records" class="hidden">
+         <div class="flex flex-wrap justify-between items-center gap-4 mb-6">
+            <div class="flex items-center gap-4">
+                <h2 class="text-xl font-bold text-gray-800">Historial de Registros</h2>
+                <div>
+                    <label for="branchFilter" class="sr-only">Filtrar por Sucursal</label>
+                    <select id="branchFilter" onchange="applyFiltersAndDisplay()" class="form-control text-sm bg-white">
+                        <option value="all">Todas las sucursales</option>
+                    </select>
+                </div>
+            </div>
+            <div class="flex items-center gap-2">
+                <button onclick="generateGeneralReport()" class="px-4 py-2 bg-blue-600 text-white font-semibold text-sm rounded-lg shadow-sm hover:bg-blue-700 transition">
+                    Informe General
+                </button>
+                <div class="relative" id="exportMenuWrapper">
+                    <button id="exportMenuButton" type="button" class="px-4 py-2 bg-secondary text-white font-semibold text-sm rounded-lg shadow-sm hover:bg-primary transition flex items-center gap-2" aria-haspopup="true" aria-expanded="false">
+                        Exportar
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+                        </svg>
+                    </button>
+                    <div id="exportMenu" class="absolute right-0 mt-2 w-44 bg-white border border-gray-200 rounded-lg shadow-lg py-1 hidden z-10">
+                        <button type="button" data-export="pdf" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2">
+                            <span class="inline-flex w-2 h-2 rounded-full bg-red-500"></span>
+                            PDF
+                        </button>
+                        <button type="button" data-export="excel" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2">
+                            <span class="inline-flex w-2 h-2 rounded-full bg-green-500"></span>
+                            Excel
+                        </button>
+                        <button type="button" data-export="csv" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2">
+                            <span class="inline-flex w-2 h-2 rounded-full bg-amber-500"></span>
+                            CSV
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-x-auto">
+            <table class="w-full text-left">
+                <thead class="bg-gray-50 border-b">
+                    <tr>
+                        <th class="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">Orden</th>
+                        <th class="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">Sucursal</th>
+                        <th class="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">Vehículo</th>
+                        <th class="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">Tipo Registro</th>
+                        <th class="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">KM</th>
+                        <th class="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">Fecha</th>
+                        <th class="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">Surco Mín.</th>
+                        <th class="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">Rendimiento (km/mm)</th>
+                        <th class="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider text-right">Acciones</th>
+                    </tr>
+                    <tr class="bg-white">
+                        <th class="px-4 py-2">
+                            <input id="orderFilter" type="text" placeholder="Buscar orden" class="filter-input bg-white" oninput="applyFiltersAndDisplay()" />
+                        </th>
+                        <th class="px-4 py-2">
+                            <select id="branchColumnFilter" class="filter-input bg-white" onchange="applyFiltersAndDisplay()">
+                                <option value="">Todas</option>
+                            </select>
+                        </th>
+                        <th class="px-4 py-2">
+                            <input id="vehicleFilter" type="text" placeholder="Buscar vehículo" class="filter-input bg-white" oninput="applyFiltersAndDisplay()" />
+                        </th>
+                        <th class="px-4 py-2">
+                            <select id="measurementTypeFilter" class="filter-input bg-white" onchange="applyFiltersAndDisplay()">
+                                <option value="">Todos</option>
+                                <option value="control">Solo controles</option>
+                                <option value="nuevo">Ingresos (nuevos)</option>
+                            </select>
+                        </th>
+                        <th class="px-4 py-2">
+                            <input id="kmFilter" type="text" placeholder="Filtrar km" class="filter-input bg-white" oninput="applyFiltersAndDisplay()" />
+                        </th>
+                        <th class="px-4 py-2">
+                            <input id="dateFilter" type="date" class="filter-input bg-white" onchange="applyFiltersAndDisplay()" />
+                        </th>
+                        <th class="px-4 py-2">
+                            <input id="surcoFilter" type="text" placeholder="Mínimo mm" class="filter-input bg-white" oninput="applyFiltersAndDisplay()" />
+                        </th>
+                        <th class="px-4 py-2">
+                            <input id="kpmmFilter" type="text" placeholder="Filtrar kpmm" class="filter-input bg-white" oninput="applyFiltersAndDisplay()" />
+                        </th>
+                        <th class="px-4 py-2"></th>
+                    </tr>
+                </thead>
+                <tbody id="recordsTableBody">
+                    <!-- Filas se insertarán dinámicamente -->
+                </tbody>
+            </table>
+        </div>
+        <div id="topPerformersSection" class="mt-6 bg-white rounded-xl shadow-sm border border-gray-200">
+            <div class="px-5 py-4 border-b border-gray-100 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                    <h3 class="text-lg font-semibold text-gray-800">Mejores rendimientos por marca/modelo</h3>
+                    <p class="text-xs text-gray-500">Basado en registros de control con KPI calculado (km recorridos por mm).</p>
+                </div>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left">
+                    <thead class="bg-gray-50 border-b text-xs uppercase tracking-wide text-gray-500">
+                        <tr>
+                            <th class="px-3 py-3 font-semibold">#</th>
+                            <th class="px-3 py-3 font-semibold">Marca / Modelo</th>
+                            <th class="px-3 py-3 font-semibold">Medida</th>
+                            <th class="px-3 py-3 font-semibold">Promedio KPI (km/mm)</th>
+                            <th class="px-3 py-3 font-semibold">Cantidad de controles</th>
+                        </tr>
+                    </thead>
+                    <tbody id="topPerformersTableBody"></tbody>
+                </table>
+            </div>
+        </div>
+      </div>
       <div id="tab-content-maintenance" class="hidden">
         <div class="space-y-8">
           <section class="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
@@ -3022,91 +3296,6 @@
         </div>
       </div>
 
-      <div id="tab-content-records" class="hidden">
-         <div class="flex flex-wrap justify-between items-center gap-4 mb-6">
-            <div class="flex items-center gap-4">
-                <h2 class="text-xl font-bold text-gray-800">Historial de Registros</h2>
-                <div>
-                    <label for="branchFilter" class="sr-only">Filtrar por Sucursal</label>
-                    <select id="branchFilter" onchange="applyFiltersAndDisplay()" class="form-control text-sm bg-white">
-                        <option value="all">Todas las sucursales</option>
-                    </select>
-                </div>
-            </div>
-            <div class="flex items-center gap-2">
-                <button onclick="generateGeneralReport()" class="px-4 py-2 bg-blue-600 text-white font-semibold text-sm rounded-lg shadow-sm hover:bg-blue-700 transition">
-                    Informe General
-                </button>
-                <div class="relative" id="exportMenuWrapper">
-                    <button id="exportMenuButton" type="button" class="px-4 py-2 bg-secondary text-white font-semibold text-sm rounded-lg shadow-sm hover:bg-primary transition flex items-center gap-2" aria-haspopup="true" aria-expanded="false">
-                        Exportar
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
-                        </svg>
-                    </button>
-                    <div id="exportMenu" class="absolute right-0 mt-2 w-44 bg-white border border-gray-200 rounded-lg shadow-lg py-1 hidden z-10">
-                        <button type="button" data-export="pdf" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2">
-                            <span class="inline-flex w-2 h-2 rounded-full bg-red-500"></span>
-                            PDF
-                        </button>
-                        <button type="button" data-export="excel" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2">
-                            <span class="inline-flex w-2 h-2 rounded-full bg-green-500"></span>
-                            Excel
-                        </button>
-                        <button type="button" data-export="csv" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2">
-                            <span class="inline-flex w-2 h-2 rounded-full bg-amber-500"></span>
-                            CSV
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </div>
-        <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-x-auto">
-            <table class="w-full text-left">
-                <thead class="bg-gray-50 border-b">
-                    <tr>
-                        <th class="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">Orden</th>
-                        <th class="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">Sucursal</th>
-                        <th class="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">Vehículo</th>
-                        <th class="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">KM</th>
-                        <th class="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">Fecha</th>
-                        <th class="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">Surco Mín.</th>
-                        <th class="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">Rendimiento (km/mm)</th>
-                        <th class="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider text-right">Acciones</th>
-                    </tr>
-                    <tr class="bg-white">
-                        <th class="px-4 py-2">
-                            <input id="orderFilter" type="text" placeholder="Buscar orden" class="filter-input bg-white" oninput="applyFiltersAndDisplay()" />
-                        </th>
-                        <th class="px-4 py-2">
-                            <select id="branchColumnFilter" class="filter-input bg-white" onchange="applyFiltersAndDisplay()">
-                                <option value="">Todas</option>
-                            </select>
-                        </th>
-                        <th class="px-4 py-2">
-                            <input id="vehicleFilter" type="text" placeholder="Buscar vehículo" class="filter-input bg-white" oninput="applyFiltersAndDisplay()" />
-                        </th>
-                        <th class="px-4 py-2">
-                            <input id="kmFilter" type="text" placeholder="Filtrar km" class="filter-input bg-white" oninput="applyFiltersAndDisplay()" />
-                        </th>
-                        <th class="px-4 py-2">
-                            <input id="dateFilter" type="date" class="filter-input bg-white" onchange="applyFiltersAndDisplay()" />
-                        </th>
-                        <th class="px-4 py-2">
-                            <input id="surcoFilter" type="text" placeholder="Mínimo mm" class="filter-input bg-white" oninput="applyFiltersAndDisplay()" />
-                        </th>
-                        <th class="px-4 py-2">
-                            <input id="kpmmFilter" type="text" placeholder="Filtrar kpmm" class="filter-input bg-white" oninput="applyFiltersAndDisplay()" />
-                        </th>
-                        <th class="px-4 py-2"></th>
-                    </tr>
-                </thead>
-                <tbody id="recordsTableBody">
-                    <!-- Filas se insertarán dinámicamente -->
-                </tbody>
-            </table>
-        </div>
-      </div>
 
     </main>
   </div>
