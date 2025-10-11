@@ -177,16 +177,6 @@
       return (value ?? '').toString().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
     }
 
-    function escapeHtml(value) {
-      return (value ?? '')
-        .toString()
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-    }
-
     function updateTopPerformers(records) {
       const tableBody = document.getElementById('topPerformersTableBody');
       if (!tableBody) return;
@@ -1111,20 +1101,11 @@
     function updateAvailabilityBadge(metrics) {
       const badge = document.getElementById('fleetAvailabilityBadge');
       if (!badge) return;
-      const baseClass = 'inline-flex items-center justify-center sm:justify-end px-3 py-1 rounded-full border text-xs font-semibold';
       const AVAILABILITY_BADGE_BASE_CLASS = 'inline-block px-3 py-1 rounded-full text-xs font-medium transition';
       if (!metrics || metrics.totalTracked === 0 || metrics.availabilityPercent === null) {
         badge.textContent = 'Disponibilidad: N/D';
         badge.className = `${baseClass} border-gray-300 text-gray-500 bg-gray-50`;
         return;
-      }
-      const percentValue = metrics.availabilityPercent;
-      let palette = 'border-amber-200 text-amber-700 bg-amber-50';
-      if (percentValue >= 90) {
-        palette = 'border-blue-200 text-blue-700 bg-blue-50';
-      } else if (percentValue < 75) {
-        palette = 'border-red-200 text-red-700 bg-red-50';
-      }
       }
       const percentValue = metrics.availabilityPercent;
       let palette = 'border-amber-200 text-amber-700 bg-amber-50';
@@ -1260,7 +1241,6 @@
         emptyState.classList.remove('hidden');
         content.classList.add('hidden');
         if (updatedAtEl) updatedAtEl.textContent = '';
-        if (summary) summary.innerHTML = '';
         if (branchButtonsContainer) {
           branchButtonsContainer.innerHTML = '';
         }
@@ -1358,32 +1338,6 @@
 
       if (summary) {
         summary.innerHTML = `
-          <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-            <article class="rounded-xl border border-primary/30 bg-primary/10 p-4">
-              <p class="text-xs font-semibold uppercase tracking-wide text-primary">Vehículos en selección</p>
-              <p class="mt-2 text-3xl font-bold text-primary">${formatNumber(filteredEntries.length, '0')}</p>
-              <p class="mt-3 text-xs text-primary/80">Kilometraje promedio: ${averageMileage !== null ? formatNumber(averageMileage, '0') + ' km' : 'N/D'}</p>
-            </article>
-            <article class="rounded-xl border border-blue-200 bg-blue-50 p-4">
-              <p class="text-xs font-semibold uppercase tracking-wide text-blue-600">Vehículos disponibles</p>
-              <p class="mt-2 text-3xl font-bold text-blue-600">${formatNumber(availabilityMetrics.availableCount, '0')}</p>
-            </article>
-            <article class="rounded-xl border border-slate-200 bg-slate-50 p-4">
-              <p class="text-xs font-semibold uppercase tracking-wide text-slate-600">En taller / fuera de servicio</p>
-              <p class="mt-2 text-3xl font-bold text-slate-600">${formatNumber(availabilityMetrics.inShopCount, '0')}</p>
-            </article>
-            <article class="rounded-xl border border-sky-200 bg-sky-50 p-4">
-              <p class="text-xs font-semibold uppercase tracking-wide text-sky-600">Disponibilidad de flota</p>
-              <p class="mt-2 text-3xl font-bold text-sky-600">${availabilityMetrics.availabilityPercent !== null ? `${availabilityMetrics.availabilityPercent.toFixed(1)}%` : 'N/D'}</p>
-            </article>
-            <article class="rounded-xl border border-red-200 bg-red-50 p-4">
-              <p class="text-xs font-semibold uppercase tracking-wide text-red-600">Mantención vencida</p>
-              <p class="mt-2 text-3xl font-bold text-red-600">${formatNumber(dueNow, '0')}</p>
-            </article>
-            <article class="rounded-xl border border-amber-200 bg-amber-50 p-4">
-              <p class="text-xs font-semibold uppercase tracking-wide text-amber-600">Próximas (&le; ${DEFAULT_KM_ALERT_THRESHOLD.toLocaleString('es-CL')} km)</p>
-              <p class="mt-2 text-3xl font-bold text-amber-600">${formatNumber(dueSoon, '0')}</p>
-            </article>
           <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-6 gap-4">
             <div class="p-4 bg-primary/10 border border-primary/30 rounded-lg">
               <p class="text-xs uppercase text-primary tracking-wide font-semibold">Vehículos en selección</p>
@@ -2104,14 +2058,6 @@
       if (!button) return false;
       const values = getTireRequestFormValues();
       const complete = isTireRequestFormComplete(values);
-      button.disabled = false;
-      if (complete) {
-        button.classList.remove('opacity-60');
-        button.removeAttribute('aria-disabled');
-      } else {
-        button.classList.add('opacity-60');
-        button.setAttribute('aria-disabled', 'true');
-      }
       button.disabled = !complete;
       return complete;
     }
@@ -2162,11 +2108,6 @@
       showTireRequestCachedNotice(null);
       const generateButton = document.getElementById('tireRequestGenerateButton');
       if (generateButton) {
-        generateButton.disabled = false;
-        generateButton.textContent = 'Generar solicitud';
-        generateButton.removeAttribute('aria-busy');
-        generateButton.classList.add('opacity-60');
-        generateButton.setAttribute('aria-disabled', 'true');
         generateButton.disabled = true;
         generateButton.textContent = 'Generar solicitud';
         generateButton.removeAttribute('aria-busy');
@@ -2183,21 +2124,6 @@
       activeTireRequestRecord = null;
     }
     window.closeTireRequestModal = closeTireRequestModal;
-
-    window.handleTireRequestPhotoError = function(event) {
-      const img = event?.target;
-      if (!img) return;
-      img.removeAttribute('src');
-      img.classList.add('hidden');
-      const wrapper = img.parentElement;
-      if (wrapper && !wrapper.querySelector('[data-photo-fallback]')) {
-        const placeholder = document.createElement('div');
-        placeholder.setAttribute('data-photo-fallback', 'true');
-        placeholder.className = 'absolute inset-0 flex items-center justify-center text-xs text-gray-500 bg-gray-100';
-        placeholder.textContent = 'Imagen no disponible';
-        wrapper.appendChild(placeholder);
-      }
-    };
 
     window.openTireRequest = function(recordId) {
       const modal = document.getElementById('tireRequestModal');
@@ -2293,20 +2219,6 @@
         if (!tiresWithPhotos.length) {
           photosContainer.innerHTML = '<p class="col-span-full text-sm text-gray-500">No hay fotografías adjuntas para este registro.</p>';
         } else {
-          photosContainer.innerHTML = tiresWithPhotos.map(tire => {
-            const position = escapeHtml(tire.position || 'Neumático');
-            const model = escapeHtml(tire.makeModel || '');
-            const photoUrl = escapeHtml(tire.photoURL);
-            const caption = model ? `${position} · ${model}` : position;
-            return `
-              <figure class="space-y-2">
-                <div class="relative aspect-[4/3] w-full overflow-hidden rounded-xl border border-gray-200 bg-gray-100">
-                  <img src="${photoUrl}" alt="${position}" loading="lazy" referrerpolicy="no-referrer" onerror="window.handleTireRequestPhotoError?.(event)" class="h-full w-full object-cover" />
-                </div>
-                <figcaption class="text-xs text-gray-600">${caption}</figcaption>
-              </figure>
-            `;
-          }).join('');
           photosContainer.innerHTML = tiresWithPhotos.map(tire => `<figure class="bg-gray-50 border border-gray-200 rounded-lg overflow-hidden">
               <img src="${tire.photoURL}" alt="${tire.position || 'Neumático'}" class="w-full h-32 object-cover" />
               <figcaption class="px-3 py-2 text-xs text-gray-600">${tire.position || 'Posición'} · ${tire.makeModel || ''}</figcaption>
@@ -2630,7 +2542,6 @@
             });
             return { tire, status: 'fulfilled', imageBase64: base64 };
           } catch (error) {
-            console.warn(`No se pudo cargar la imagen para ${tire.position}:`, error);
             console.error(`No se pudo cargar la imagen para ${tire.position}:`, error);
             return { tire, status: 'rejected' };
           }
@@ -2686,8 +2597,6 @@
         generateButton.disabled = true;
         generateButton.textContent = 'Generando...';
         generateButton.setAttribute('aria-busy', 'true');
-        generateButton.classList.remove('opacity-60');
-        generateButton.removeAttribute('aria-disabled');
       }
 
       displayAppMessage('Generando solicitud de neumáticos...', 'info');
@@ -2715,7 +2624,6 @@
         displayAppMessage(`No se pudo generar la solicitud: ${error.message}`, 'error');
       } finally {
         if (generateButton) {
-          generateButton.disabled = false;
           generateButton.textContent = 'Generar solicitud';
           generateButton.removeAttribute('aria-busy');
         }
@@ -3443,13 +3351,6 @@
                     <path d="M4.603 12.087a.81.81 0 0 1-.438.448l-.175.082a.558.558 0 0 1-.685-.28.52.52 0 0 1 .035-.634l.116-.117.175-.082a.81.81 0 0 1 .438-.448l.175-.082.685.28a.52.52 0 0 1-.035.634l-.116.117-.175.082zm1.833-1.422a.512.512 0 0 1-.028.682l-.206.206a.512.512 0 0 1-.682.028l-.206-.206a.512.512 0 0 1 .028-.682l.206-.206a.512.512 0 0 1 .682-.028l.206.206zm.208.64a.512.512 0 0 1-.028.682l-.206.206a.512.512 0 0 1-.682.028l-.206-.206a.512.512 0 0 1 .028-.682l.206-.206a.512.512 0 0 1 .682-.028l.206.206zm1.758-1.55a.512.512 0 0 1 .686.252l.206.411a.512.512 0 0 1-.252.686l-.411.206a.512.512 0 0 1-.686-.252l-.206-.411a.512.512 0 0 1 .252-.686l.411.206zm.686.645a.512.512 0 0 1 .252.686l-.206.411a.512.512 0 0 1-.686.252l-.411-.206a.512.512 0 0 1-.252-.686l.206-.411a.512.512 0 0 1 .686-.252l.411.206zM8.579 14.3a.512.512 0 0 1 .252.686l-.206.411a.512.512 0 0 1-.686.252l-.411-.206a.512.512 0 0 1-.252-.686l.206-.411a.512.512 0 0 1 .686-.252l.411.206zm2.814-2.97a.512.512 0 0 1 .686.252l.206.411a.512.512 0 0 1-.252.686l-.411.206a.512.512 0 0 1-.686-.252l-.206-.411a.512.512 0 0 1 .252-.686l.411.206zm.686.645a.512.512 0 0 1 .252.686l-.206.411a.512.512 0 0 1-.686.252l-.411-.206a.512.512 0 0 1-.252-.686l.206-.411a.512.512 0 0 1 .686-.252l.411.206zM11.803 14.3a.512.512 0 0 1 .252.686l-.206.411a.512.512 0 0 1-.686.252l-.411-.206a.512.512 0 0 1-.252-.686l.206-.411a.512.512 0 0 1 .686-.252l.411.206z"/>
                   </svg>
                 </button>
-                <button onclick="window.openTireRequest('${record.id}')" class="text-blue-600 hover:text-blue-800 p-2 rounded-lg transition hover:bg-blue-100 flex items-center gap-2" title="Crear solicitud de neumáticos">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
-                    <path d="M8 1a.75.75 0 0 1 .75.75V7.25h5.5a.75.75 0 0 1 0 1.5h-5.5v5.5a.75.75 0 0 1-1.5 0v-5.5h-5.5a.75.75 0 0 1 0-1.5h5.5V1.75A.75.75 0 0 1 8 1Z"/>
-                  </svg>
-                  <span class="hidden sm:inline">Crear solicitud de neumáticos</span>
-                  <span class="sm:hidden">Solicitud</span>
-                </button>
               </div>
             </td>
           </tr>`;
@@ -4115,43 +4016,6 @@
       </div>
       <div id="tab-content-maintenance" class="hidden">
         <div class="space-y-8">
-          <section id="dashboardSection" class="space-y-6">
-            <div class="relative overflow-hidden rounded-2xl border border-primary/20 bg-gradient-to-r from-primary/10 via-white to-white p-6 shadow-sm">
-              <div class="absolute -right-16 -top-16 h-40 w-40 rounded-full bg-primary/5 blur-2xl"></div>
-              <div class="flex flex-wrap items-start justify-between gap-4">
-                <div class="max-w-2xl">
-                  <p class="text-xs uppercase tracking-[0.3em] text-primary">Mantenciones preventivas</p>
-                  <h3 class="mt-2 text-3xl font-bold text-gray-900">Panel de salud de la flota</h3>
-                  <p class="mt-2 text-sm text-gray-600">Visualiza el estado de mantención por sucursal y prioriza intervenciones con información actualizada desde la última planilla cargada.</p>
-                </div>
-                <span id="dashboardUpdatedAt" class="text-sm font-medium text-gray-500"></span>
-              </div>
-            </div>
-            <div id="dashboardEmptyState" class="rounded-2xl border border-dashed border-gray-300 bg-white p-8 text-center text-sm text-gray-500 shadow-sm">
-              <p class="text-base font-semibold text-gray-700">Sin datos de mantenciones</p>
-              <p class="mt-2">Importa la planilla de flota desde la pestaña Catálogo para activar el dashboard dinámico.</p>
-            </div>
-            <div id="dashboardContent" class="hidden space-y-6">
-              <div class="grid gap-6 lg:grid-cols-[1.2fr_1fr]">
-                <div class="space-y-6">
-                  <div class="rounded-2xl border border-gray-200 bg-white/90 shadow-sm backdrop-blur">
-                    <div class="flex flex-col gap-5 border-b border-gray-100 px-6 py-5">
-                      <div class="flex flex-wrap items-center justify-between gap-4">
-                        <div>
-                          <h4 class="text-lg font-semibold text-gray-800">Filtros inteligentes</h4>
-                          <p class="text-sm text-gray-500">Explora las mantenciones por sucursal y tipo de vehículo.</p>
-                        </div>
-                        <span id="fleetAvailabilityBadge" class="inline-flex items-center justify-center sm:justify-end px-3 py-1 rounded-full border border-gray-300 text-xs font-semibold text-gray-600 bg-gray-50">Disponibilidad: —</span>
-                      </div>
-                      <div class="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-                        <div class="flex flex-col gap-2">
-                          <span class="text-xs font-semibold uppercase tracking-wide text-gray-500">Sucursales</span>
-                          <div id="dashboardBranchButtons" class="flex flex-wrap gap-2"></div>
-                        </div>
-                        <div class="flex flex-col gap-2">
-                          <label for="dashboardVehicleFilter" class="text-xs font-semibold uppercase tracking-wide text-gray-500">Tipo de vehículo</label>
-                          <select id="dashboardVehicleFilter" class="filter-input bg-white w-full min-w-[10rem]"></select>
-                        </div>
           <section id="dashboardSection" class="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
             <div class="flex flex-wrap items-start justify-between gap-4">
               <h3 class="text-2xl font-bold text-gray-800">Dashboard de Mantenciones Preventivas</h3>
@@ -4185,31 +4049,6 @@
                     <div class="relative h-72">
                       <canvas id="maintenanceStatusChart"></canvas>
                     </div>
-                    <div class="px-6 py-4">
-                      <div id="dashboardStatusFilters" class="flex flex-wrap gap-2"></div>
-                    </div>
-                    <div class="h-72 px-6 pb-6">
-                      <canvas id="maintenanceStatusChart"></canvas>
-                    </div>
-                  </div>
-                </div>
-                <div class="space-y-6">
-                  <div class="rounded-2xl border border-gray-200 bg-white shadow-sm">
-                    <div class="border-b border-gray-100 px-6 py-5">
-                      <h4 class="text-lg font-semibold text-gray-800">Indicadores principales</h4>
-                      <p class="text-sm text-gray-500">Resumen automático de la selección actual.</p>
-                    </div>
-                    <div id="dashboardSummary" class="px-6 py-6"></div>
-                  </div>
-                  <div class="rounded-2xl border border-gray-200 bg-white shadow-sm">
-                    <div class="border-b border-gray-100 px-6 py-5">
-                      <h4 class="text-lg font-semibold text-gray-800">Prioridad de intervención</h4>
-                      <p class="text-sm text-gray-500">Ordenado por kilómetros restantes para la próxima mantención preventiva.</p>
-                    </div>
-                    <div class="max-h-80 overflow-y-auto px-6 py-4">
-                      <table class="min-w-full text-sm">
-                        <thead>
-                          <tr class="text-left text-xs uppercase tracking-wide text-gray-500">
                   </div>
                 </div>
                 <div class="rounded-2xl border border-gray-200 bg-white shadow-sm">
@@ -4224,7 +4063,6 @@
                             <th class="px-2 py-2">Patente</th>
                             <th class="px-2 py-2">Falta</th>
                             <th class="px-2 py-2">Estado</th>
-                            <th class="px-2 py-2">Última mantención</th>
                             <th class="px-2 py-2">Última Mantención</th>
                           </tr>
                         </thead>
@@ -4472,7 +4310,6 @@
                 <p class="text-xs text-gray-500">Completa estos campos para formalizar la solicitud con el proveedor correspondiente.</p>
                 <p id="tireRequestCachedNotice" class="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 hidden"></p>
                 <div class="flex flex-col sm:flex-row sm:justify-end sm:items-center gap-3 pt-4 border-t border-gray-100">
-                  <button type="button" id="tireRequestGenerateButton" class="px-4 py-2 bg-blue-600 text-white text-sm font-semibold rounded-lg shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 opacity-60" aria-disabled="true">Generar solicitud</button>
                   <button type="button" id="tireRequestGenerateButton" class="px-4 py-2 bg-blue-600 text-white text-sm font-semibold rounded-lg shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50">Generar solicitud</button>
                   <button type="button" id="tireRequestCancelButton" class="px-4 py-2 text-sm font-semibold text-gray-600 rounded-lg hover:text-gray-800 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-300">Cancelar</button>
                 </div>
