@@ -131,7 +131,9 @@
     const MAINTENANCE_STATUS_KEYWORDS = ['Vencido', 'Optimo', 'Por Vencer'];
     const FLEET_FALLBACK_INDEX = { order: 2, mobile: 2, plate: 3, mileage: 13 };
     const CATALOG_STORAGE_KEY = 'flota-track-catalog';
+    const TIRE_REQUEST_STORAGE_KEY = 'flota-track-tire-requests';
     const DEFAULT_KM_ALERT_THRESHOLD = 2000;
+    const currencyFormatterCL = new Intl.NumberFormat('es-CL', { style: 'currency', currency: 'CLP', minimumFractionDigits: 0 });
     const longevityTips = [
       "Mantén la <strong>presión correcta</strong> semanalmente. La subinflación es el principal asesino de neumáticos.",
       "Realiza la <strong>rotación</strong> cada 10–12 mil km para asegurar un desgaste uniforme.",
@@ -164,6 +166,7 @@
     let dashboardStatusFilter = 'Todos';
     let dashboardCachedEntries = [];
     let activeTireRequestRecord = null;
+    let tireRequestFormCache = new Map();
 
     function normalizeOrderKey(value) {
       if (value === null || value === undefined) return '';
@@ -1936,14 +1939,121 @@
       const digits = event.target.value.replace(/[^\d]/g, '');
       if (!digits) {
         event.target.value = '';
+        updateTireRequestGenerateState();
         return;
       }
       const amount = parseInt(digits, 10);
       if (!Number.isFinite(amount)) {
         event.target.value = '';
+        updateTireRequestGenerateState();
         return;
       }
-      event.target.value = amount.toLocaleString('es-CL', { style: 'currency', currency: 'CLP', minimumFractionDigits: 0 });
+      event.target.value = currencyFormatterCL.format(amount);
+      updateTireRequestGenerateState();
+    }
+
+    function parseCurrencyInput(value) {
+      if (value === null || value === undefined) return null;
+      const digits = String(value).replace(/[^\d]/g, '');
+      if (!digits) return null;
+      const parsed = parseInt(digits, 10);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+
+    function loadTireRequestCache() {
+      try {
+        const raw = localStorage.getItem(TIRE_REQUEST_STORAGE_KEY);
+        if (!raw) return new Map();
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== 'object') return new Map();
+        return new Map(Object.entries(parsed));
+      } catch (error) {
+        console.error('No se pudo cargar el historial de solicitudes de neumáticos.', error);
+        return new Map();
+      }
+    }
+
+    function persistTireRequestCache() {
+      try {
+        const payload = Object.fromEntries(tireRequestFormCache.entries());
+        localStorage.setItem(TIRE_REQUEST_STORAGE_KEY, JSON.stringify(payload));
+      } catch (error) {
+        console.error('No se pudo guardar el historial de solicitudes de neumáticos.', error);
+      }
+    }
+
+    function cacheTireRequestForm(recordId, payload) {
+      if (!recordId) return;
+      tireRequestFormCache.set(recordId, payload);
+      persistTireRequestCache();
+    }
+
+    function getCachedTireRequestForm(recordId) {
+      if (!recordId) return null;
+      return tireRequestFormCache.get(recordId) || null;
+    }
+
+    function formatCurrencyCLP(value) {
+      return Number.isFinite(value) ? currencyFormatterCL.format(value) : '';
+    }
+
+    function getTireRequestFormValues() {
+      const unitsInput = document.getElementById('tireRequestUnits');
+      const providerInput = document.getElementById('tireRequestProvider');
+      const unitValueInput = document.getElementById('tireRequestUnitValue');
+      const brandInput = document.getElementById('tireRequestBrand');
+      const modelInput = document.getElementById('tireRequestModel');
+      const measureInput = document.getElementById('tireRequestMeasure');
+
+      const unitsValue = unitsInput ? parseInt(unitsInput.value, 10) : NaN;
+      const unitValue = unitValueInput ? parseCurrencyInput(unitValueInput.value) : null;
+
+      return {
+        units: Number.isFinite(unitsValue) && unitsValue > 0 ? unitsValue : null,
+        provider: providerInput ? providerInput.value.trim() : '',
+        unitValue: Number.isFinite(unitValue) && unitValue > 0 ? unitValue : null,
+        brand: brandInput ? brandInput.value.trim() : '',
+        model: modelInput ? modelInput.value.trim() : '',
+        measure: measureInput ? measureInput.value.trim() : '',
+      };
+    }
+
+    function isTireRequestFormComplete(values) {
+      if (!values) return false;
+      return (
+        Number.isFinite(values.units) && values.units > 0 &&
+        values.provider.length > 0 &&
+        Number.isFinite(values.unitValue) && values.unitValue > 0 &&
+        values.brand.length > 0 &&
+        values.model.length > 0 &&
+        values.measure.length > 0
+      );
+    }
+
+    function updateTireRequestGenerateState() {
+      const button = document.getElementById('tireRequestGenerateButton');
+      if (!button) return false;
+      const values = getTireRequestFormValues();
+      const complete = isTireRequestFormComplete(values);
+      button.disabled = !complete;
+      return complete;
+    }
+
+    function showTireRequestCachedNotice(timestampIso) {
+      const notice = document.getElementById('tireRequestCachedNotice');
+      if (!notice) return;
+      if (!timestampIso) {
+        notice.classList.add('hidden');
+        notice.textContent = '';
+        return;
+      }
+      const timestamp = new Date(timestampIso);
+      const hasValidDate = !Number.isNaN(timestamp.valueOf());
+      const formatted = hasValidDate ? timestamp.toLocaleString('es-CL') : '';
+      notice.textContent = formatted
+        ? `Solicitud generada el ${formatted}. Puedes actualizar los campos antes de volver a generar.`
+        : 'Existe una solicitud previa para este registro. Puedes generar una nueva con los mismos datos.';
+      notice.classList.remove('hidden');
     }
 
     function clearTireRequestModal() {
@@ -1971,6 +2081,13 @@
       const measureInput = document.getElementById('tireRequestMeasure');
       if (measureInput) {
         delete measureInput.dataset.originalSize;
+      }
+      showTireRequestCachedNotice(null);
+      const generateButton = document.getElementById('tireRequestGenerateButton');
+      if (generateButton) {
+        generateButton.disabled = true;
+        generateButton.textContent = 'Generar solicitud';
+        generateButton.removeAttribute('aria-busy');
       }
     }
 
@@ -2117,6 +2234,39 @@
         updateTireRequestMeasureAlert();
       }
 
+      const providerInput = document.getElementById('tireRequestProvider');
+      const unitValueInput = document.getElementById('tireRequestUnitValue');
+      const brandInput = document.getElementById('tireRequestBrand');
+      const modelInput = document.getElementById('tireRequestModel');
+
+      const cachedForm = getCachedTireRequestForm(record.id);
+      if (cachedForm) {
+        if (unitsInput && Number.isFinite(cachedForm.units)) {
+          unitsInput.value = cachedForm.units;
+        }
+        if (providerInput) {
+          providerInput.value = cachedForm.provider || '';
+        }
+        if (unitValueInput) {
+          unitValueInput.value = Number.isFinite(cachedForm.unitValue)
+            ? formatCurrencyCLP(cachedForm.unitValue)
+            : '';
+        }
+        if (brandInput) {
+          brandInput.value = cachedForm.brand || '';
+        }
+        if (modelInput) {
+          modelInput.value = cachedForm.model || '';
+        }
+        if (measureInput && cachedForm.measure) {
+          measureInput.value = cachedForm.measure;
+          updateTireRequestMeasureAlert();
+        }
+        showTireRequestCachedNotice(cachedForm.generatedAt || null);
+      } else {
+        showTireRequestCachedNotice(null);
+      }
+
       const modalBody = document.getElementById('tireRequestModalBody');
       if (modalBody) modalBody.scrollTop = 0;
 
@@ -2126,7 +2276,337 @@
 
       const firstEditable = document.getElementById('tireRequestUnits');
       if (firstEditable) firstEditable.focus();
+
+      updateTireRequestGenerateState();
     };
+
+    async function generateTireRequestPdf(record, formValues) {
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF();
+
+      try {
+        if (logoBase64) {
+          doc.addImage(logoBase64, 'PNG', 15, 10, 50, 16);
+        }
+      } catch (error) {
+        console.error('No se pudo incorporar el logo en la solicitud de neumáticos.', error);
+      }
+
+      const orderDisplay = record.orderNumber || 'N/A';
+      const branchDisplay = record.branchName || 'N/A';
+      const plateDisplay = record.vehiclePlate || 'N/A';
+      const vehicleType = record.vehicleType || 'N/A';
+      const sizeDisplay = record.tireSize || 'N/A';
+      const makeModelDisplay = record.generalMakeModel || 'N/A';
+      const measurementType = normalizeMeasurementType(record.measurementType, { fallback: MEASUREMENT_TYPES.CONTROL });
+      const measurementLabel = getMeasurementTypeLabel(measurementType);
+      const dateDisplay = getRecordDateDisplay(record) || getRecordDateIso(record) || 'N/A';
+      const mileage = getRecordMileage(record);
+      const mileageDisplay = mileage !== null ? `${mileage.toLocaleString('es-CL')} km` : 'N/A';
+      const identification = [orderDisplay !== 'N/A' ? orderDisplay : '', vehicleType !== 'N/A' ? vehicleType : '']
+        .filter(Boolean)
+        .join(' · ') || 'N/A';
+
+      doc.setFontSize(18);
+      doc.setFont('helvetica', 'bold');
+      doc.text('Solicitud de Neumáticos', 105, 20, { align: 'center' });
+
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`Emitido el: ${new Date().toLocaleString('es-CL')}`, 15, 27);
+      doc.text(`Registro origen: ${orderDisplay}`, 195, 27, { align: 'right' });
+
+      doc.setLineWidth(0.5);
+      doc.line(15, 30, 195, 30);
+
+      let yPos = 36;
+
+      const infoEntries = [
+        ['Fecha del registro', dateDisplay],
+        ['Sucursal', branchDisplay],
+        ['Orden', orderDisplay],
+        ['Identificación', identification],
+        ['Patente', plateDisplay],
+        ['Tipo de vehículo', vehicleType],
+        ['Tipo de registro', measurementLabel],
+        ['Kilometraje', mileageDisplay],
+        ['Medida registrada', sizeDisplay],
+        ['Marca / Modelo', makeModelDisplay],
+      ];
+
+      doc.setFontSize(11);
+      doc.setFont('helvetica', 'bold');
+      doc.text('Datos del registro', 15, yPos);
+      yPos += 6;
+
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'normal');
+      for (let i = 0; i < infoEntries.length; i += 2) {
+        const [labelA, valueA] = infoEntries[i];
+        doc.text(`${labelA}: ${valueA}`, 15, yPos);
+        if (infoEntries[i + 1]) {
+          const [labelB, valueB] = infoEntries[i + 1];
+          doc.text(`${labelB}: ${valueB}`, 105, yPos);
+        }
+        yPos += 6;
+      }
+
+      if (record.generalComments) {
+        yPos += 2;
+        if (yPos > 270) {
+          doc.addPage();
+          yPos = 20;
+        }
+        doc.setFont('helvetica', 'bold');
+        doc.text('Comentarios del registro', 15, yPos);
+        yPos += 6;
+        doc.setFont('helvetica', 'normal');
+        const commentLines = doc.splitTextToSize(record.generalComments, 180);
+        doc.text(commentLines, 15, yPos);
+        yPos += commentLines.length * 5 + 4;
+      }
+
+      if (yPos > 250) {
+        doc.addPage();
+        yPos = 20;
+      }
+
+      const totalValue = Number.isFinite(formValues.unitValue) && Number.isFinite(formValues.units)
+        ? formValues.unitValue * formValues.units
+        : null;
+
+      doc.setFont('helvetica', 'bold');
+      doc.text('Detalles de la solicitud', 15, yPos);
+      yPos += 6;
+      doc.setFont('helvetica', 'normal');
+
+      const requestEntries = [
+        ['Proveedor', formValues.provider || 'N/A'],
+        ['Neumáticos solicitados', Number.isFinite(formValues.units) ? `${formValues.units}` : 'N/A'],
+        ['Valor unitario neto', formatCurrencyCLP(formValues.unitValue) || 'N/A'],
+        ['Total estimado', formatCurrencyCLP(totalValue) || '—'],
+        ['Marca (solo nuevos)', formValues.brand || 'N/A'],
+        ['Modelo (solo nuevos)', formValues.model || 'N/A'],
+        ['Medida solicitada', formValues.measure || 'N/A'],
+      ];
+
+      requestEntries.forEach(([label, value]) => {
+        if (yPos > 270) {
+          doc.addPage();
+          yPos = 20;
+        }
+        doc.text(`${label}: ${value}`, 15, yPos);
+        yPos += 6;
+      });
+
+      const measureDiffers = sizeDisplay && formValues.measure
+        && sizeDisplay.toString().trim().toUpperCase() !== formValues.measure.trim().toUpperCase();
+      if (measureDiffers) {
+        if (yPos > 270) {
+          doc.addPage();
+          yPos = 20;
+        }
+        doc.setTextColor(220, 38, 38);
+        doc.text('⚠️ La medida solicitada difiere de la registrada en el historial.', 15, yPos);
+        doc.setTextColor(0, 0, 0);
+        yPos += 6;
+      }
+
+      yPos += 2;
+      if (yPos > 250) {
+        doc.addPage();
+        yPos = 20;
+      }
+
+      doc.setFont('helvetica', 'bold');
+      doc.text('Detalle de mediciones', 15, yPos);
+      yPos += 6;
+
+      const tires = Array.isArray(record.tires) ? record.tires : [];
+      if (!tires.length) {
+        doc.setFont('helvetica', 'normal');
+        doc.text('No hay datos de neumáticos registrados.', 15, yPos);
+        yPos += 6;
+      } else {
+        const formatDepth = (value) => Number.isFinite(Number(value))
+          ? `${Number(value).toFixed(1)} mm`
+          : 'N/A';
+        const tableBody = tires.map((tire, index) => {
+          const surcoValues = [tire.surco1, tire.surco2, tire.surco3].map(Number);
+          const validSurcos = surcoValues.filter(Number.isFinite);
+          const minSurco = validSurcos.length ? Math.min(...validSurcos) : null;
+          return [
+            `${index + 1}`,
+            tire.position || 'N/A',
+            tire.makeModel || makeModelDisplay || 'N/A',
+            formatDepth(surcoValues[0]),
+            formatDepth(surcoValues[1]),
+            formatDepth(surcoValues[2]),
+            minSurco !== null ? `${minSurco.toFixed(1)} mm` : 'N/A',
+          ];
+        });
+
+        doc.autoTable({
+          startY: yPos,
+          head: [['#', 'Posición', 'Marca/Modelo', 'Surco 1', 'Surco 2', 'Surco 3', 'Mínimo']],
+          body: tableBody,
+          theme: 'grid',
+          headStyles: { fillColor: [5, 150, 105] },
+          didParseCell: function(data) {
+            if (data.column.index >= 3 && data.column.index <= 6) {
+              const numericValue = parseFloat(data.cell.raw);
+              if (!Number.isNaN(numericValue) && numericValue < 3) {
+                data.cell.styles.fillColor = '#FFE4E6';
+                data.cell.styles.textColor = '#9F1239';
+                data.cell.styles.fontStyle = 'bold';
+              }
+            }
+          }
+        });
+        yPos = doc.lastAutoTable.finalY + 10;
+      }
+
+      if (yPos > 250) {
+        doc.addPage();
+        yPos = 20;
+      }
+
+      doc.setFont('helvetica', 'bold');
+      doc.text('Recomendaciones automáticas', 15, yPos);
+      yPos += 6;
+      doc.setFont('helvetica', 'normal');
+
+      const recommendations = generateRecommendations(record);
+      if (!recommendations.length) {
+        doc.text('Sin recomendaciones adicionales para este registro.', 15, yPos);
+        yPos += 6;
+      } else {
+        recommendations.forEach(rec => {
+          if (yPos > 270) {
+            doc.addPage();
+            yPos = 20;
+          }
+          const split = doc.splitTextToSize(`• ${rec}`, 180);
+          doc.text(split, 15, yPos);
+          yPos += split.length * 5 + 2;
+        });
+      }
+
+      const tiresWithPhotos = tires.filter(tire => tire.photoURL && tire.photoURL !== 'N/A');
+      if (tiresWithPhotos.length) {
+        if (yPos > 200) {
+          doc.addPage();
+          yPos = 20;
+        }
+        doc.setFont('helvetica', 'bold');
+        doc.text('Fotografías del registro', 15, yPos);
+        yPos += 8;
+        doc.setFont('helvetica', 'normal');
+
+        const imagePromises = tiresWithPhotos.map(async (tire) => {
+          try {
+            if (tire.photoURL.startsWith('data:')) {
+              return { tire, status: 'fulfilled', imageBase64: tire.photoURL };
+            }
+            const response = await fetch(tire.photoURL);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const blob = await response.blob();
+            const base64 = await new Promise((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onloadend = () => resolve(reader.result);
+              reader.onerror = reject;
+              reader.readAsDataURL(blob);
+            });
+            return { tire, status: 'fulfilled', imageBase64: base64 };
+          } catch (error) {
+            console.error(`No se pudo cargar la imagen para ${tire.position}:`, error);
+            return { tire, status: 'rejected' };
+          }
+        });
+
+        const imageResults = await Promise.all(imagePromises);
+        for (const result of imageResults) {
+          if (yPos > 220) {
+            doc.addPage();
+            yPos = 20;
+          }
+          if (result.status === 'fulfilled') {
+            doc.text(`Posición: ${result.tire.position || 'N/A'} (${result.tire.makeModel || ''})`, 15, yPos);
+            doc.addImage(result.imageBase64, 'JPEG', 15, yPos + 3, 80, 60);
+            yPos += 68;
+          } else {
+            doc.text(`Imagen no disponible para la posición ${result.tire.position || 'N/A'}.`, 15, yPos);
+            yPos += 6;
+          }
+        }
+      } else {
+        if (yPos > 270) {
+          doc.addPage();
+          yPos = 20;
+        }
+        doc.text('No hay fotografías adjuntas para este registro.', 15, yPos);
+        yPos += 6;
+      }
+
+      return doc;
+    }
+
+    async function handleTireRequestGenerate(event) {
+      if (event) {
+        event.preventDefault();
+      }
+      if (!activeTireRequestRecord) {
+        displayAppMessage('Selecciona un registro antes de generar la solicitud.', 'error');
+        return;
+      }
+
+      const formComplete = updateTireRequestGenerateState();
+      if (!formComplete) {
+        displayAppMessage('Completa todos los campos de la solicitud antes de generar el PDF.', 'error');
+        return;
+      }
+
+      const formValues = getTireRequestFormValues();
+      const generateButton = document.getElementById('tireRequestGenerateButton');
+      const unitValueInput = document.getElementById('tireRequestUnitValue');
+
+      if (generateButton) {
+        generateButton.disabled = true;
+        generateButton.textContent = 'Generando...';
+        generateButton.setAttribute('aria-busy', 'true');
+      }
+
+      displayAppMessage('Generando solicitud de neumáticos...', 'info');
+
+      try {
+        const pdfDoc = await generateTireRequestPdf(activeTireRequestRecord, formValues);
+        const safeOrder = (activeTireRequestRecord.orderNumber || 'solicitud').toString().replace(/\s+/g, '_');
+        const safePlate = (activeTireRequestRecord.vehiclePlate || '').toString().replace(/\s+/g, '_');
+        const filenameParts = ['solicitud_neumaticos', safeOrder];
+        if (safePlate) filenameParts.push(safePlate);
+        const fileName = `${filenameParts.join('_')}.pdf`;
+        pdfDoc.save(fileName);
+
+        const timestamp = new Date().toISOString();
+        cacheTireRequestForm(activeTireRequestRecord.id, { ...formValues, generatedAt: timestamp });
+        showTireRequestCachedNotice(timestamp);
+
+        if (unitValueInput && Number.isFinite(formValues.unitValue)) {
+          unitValueInput.value = formatCurrencyCLP(formValues.unitValue);
+        }
+
+        displayAppMessage('✅ Solicitud de neumáticos generada correctamente.', 'success');
+      } catch (error) {
+        console.error('Error al generar la solicitud de neumáticos:', error);
+        displayAppMessage(`No se pudo generar la solicitud: ${error.message}`, 'error');
+      } finally {
+        if (generateButton) {
+          generateButton.textContent = 'Generar solicitud';
+          generateButton.removeAttribute('aria-busy');
+        }
+        updateTireRequestGenerateState();
+      }
+    }
 
     window.generateGeneralReport = function() {
         if (!window.currentRecords.length) {
@@ -3128,6 +3608,8 @@
     
     // === INICIO DE LA APP ===
     window.addEventListener('load', () => {
+      tireRequestFormCache = loadTireRequestCache();
+
       loadCatalogFromStorage();
       renderCatalogLists();
       attachOrderNumberHandlers();
@@ -3201,13 +3683,35 @@
 
       const tireRequestMeasureInput = document.getElementById('tireRequestMeasure');
       if (tireRequestMeasureInput) {
-        tireRequestMeasureInput.addEventListener('input', updateTireRequestMeasureAlert);
+        tireRequestMeasureInput.addEventListener('input', () => {
+          updateTireRequestMeasureAlert();
+          updateTireRequestGenerateState();
+        });
       }
 
       const tireRequestUnitValueInput = document.getElementById('tireRequestUnitValue');
       if (tireRequestUnitValueInput) {
         tireRequestUnitValueInput.addEventListener('focus', handleTireRequestCurrencyFocus);
+        tireRequestUnitValueInput.addEventListener('input', updateTireRequestGenerateState);
         tireRequestUnitValueInput.addEventListener('blur', handleTireRequestCurrencyBlur);
+      }
+
+      ['tireRequestUnits', 'tireRequestProvider', 'tireRequestBrand', 'tireRequestModel'].forEach(id => {
+        const input = document.getElementById(id);
+        if (input) {
+          input.addEventListener('input', updateTireRequestGenerateState);
+          input.addEventListener('change', updateTireRequestGenerateState);
+        }
+      });
+
+      const tireRequestGenerateButton = document.getElementById('tireRequestGenerateButton');
+      if (tireRequestGenerateButton) {
+        tireRequestGenerateButton.addEventListener('click', handleTireRequestGenerate);
+      }
+
+      const tireRequestCancelButton = document.getElementById('tireRequestCancelButton');
+      if (tireRequestCancelButton) {
+        tireRequestCancelButton.addEventListener('click', closeTireRequestModal);
       }
 
       document.addEventListener('keydown', (event) => {
@@ -3215,6 +3719,8 @@
           closeTireRequestModal();
         }
       });
+
+      updateTireRequestGenerateState();
 
       window.switchTab('guide');
     });
@@ -3778,6 +4284,11 @@
                   <p id="tireRequestMeasureAlert" class="mt-2 text-sm text-red-600 hidden"></p>
                 </div>
                 <p class="text-xs text-gray-500">Completa estos campos para formalizar la solicitud con el proveedor correspondiente.</p>
+                <p id="tireRequestCachedNotice" class="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 hidden"></p>
+                <div class="flex flex-col sm:flex-row sm:justify-end sm:items-center gap-3 pt-4 border-t border-gray-100">
+                  <button type="button" id="tireRequestGenerateButton" class="px-4 py-2 bg-blue-600 text-white text-sm font-semibold rounded-lg shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed" disabled>Generar solicitud</button>
+                  <button type="button" id="tireRequestCancelButton" class="px-4 py-2 text-sm font-semibold text-gray-600 rounded-lg hover:text-gray-800 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-300">Cancelar</button>
+                </div>
               </form>
             </section>
           </div>
