@@ -107,7 +107,7 @@
       NEW: 'nuevo',
       CONTROL: 'control',
     };
-    const FLEET_SHEET_NAME = 'Flota Verschae';
+    const FLEET_SHEET_NAME = 'Flota Verschae PIW';
     const FLEET_DATA_STORAGE_KEY = 'flota-track-fleet-dataset-v1';
     const FLEET_DATA_META_STORAGE_KEY = 'flota-track-fleet-dataset-meta-v1';
     const ORDER_KEYWORDS = ['orden', 'n° orden', 'nº orden', 'numero orden', 'orden vehículo', 'orden vehiculo'];
@@ -592,7 +592,7 @@
       if (!orderInput || !feedback) return;
       if (status === 'loading') {
         orderInput.placeholder = 'Buscando catálogo de flota...';
-        feedback.textContent = 'Restaurando la hoja "Flota Verschae" almacenada en este navegador...';
+        feedback.textContent = 'Restaurando la hoja "Flota Verschae PIW" almacenada en este navegador...';
         feedback.className = 'mt-1 text-xs text-gray-500';
       } else if (status === 'ready') {
         orderInput.placeholder = 'Escribe o selecciona una orden de la flota';
@@ -679,7 +679,7 @@
       } else {
         orderInput.classList.add('input-invalid');
         orderInput.classList.remove('input-valid');
-        orderInput.setCustomValidity('Número de móvil no encontrado en la hoja "Flota Verschae". Revisa la columna C.');
+        orderInput.setCustomValidity('Número de móvil no encontrado en la hoja "Flota Verschae PIW". Revisa la columna C.');
         if (feedback) {
           feedback.textContent = 'Número incorrecto. Confirma el N° de móvil (columna C) en la planilla.';
           feedback.className = 'mt-1 text-xs text-red-600';
@@ -1112,10 +1112,19 @@
       const badge = document.getElementById('fleetAvailabilityBadge');
       if (!badge) return;
       const baseClass = 'inline-flex items-center justify-center sm:justify-end px-3 py-1 rounded-full border text-xs font-semibold';
+      const AVAILABILITY_BADGE_BASE_CLASS = 'inline-block px-3 py-1 rounded-full text-xs font-medium transition';
       if (!metrics || metrics.totalTracked === 0 || metrics.availabilityPercent === null) {
         badge.textContent = 'Disponibilidad: N/D';
         badge.className = `${baseClass} border-gray-300 text-gray-500 bg-gray-50`;
         return;
+      }
+      const percentValue = metrics.availabilityPercent;
+      let palette = 'border-amber-200 text-amber-700 bg-amber-50';
+      if (percentValue >= 90) {
+        palette = 'border-blue-200 text-blue-700 bg-blue-50';
+      } else if (percentValue < 75) {
+        palette = 'border-red-200 text-red-700 bg-red-50';
+      }
       }
       const percentValue = metrics.availabilityPercent;
       let palette = 'border-amber-200 text-amber-700 bg-amber-50';
@@ -1375,6 +1384,55 @@
               <p class="text-xs font-semibold uppercase tracking-wide text-amber-600">Próximas (&le; ${DEFAULT_KM_ALERT_THRESHOLD.toLocaleString('es-CL')} km)</p>
               <p class="mt-2 text-3xl font-bold text-amber-600">${formatNumber(dueSoon, '0')}</p>
             </article>
+          <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-6 gap-4">
+            <div class="p-4 bg-primary/10 border border-primary/30 rounded-lg">
+              <p class="text-xs uppercase text-primary tracking-wide font-semibold">Vehículos en selección</p>
+              <p class="text-3xl font-bold text-primary mt-2">${formatNumber(filteredEntries.length, '0')}</p>
+              <p class="mt-3 text-xs text-primary/80">Kilometraje promedio: ${averageMileage !== null ? formatNumber(averageMileage, '0') + ' km' : 'N/D'}</p>
+            </div>
+            <div class="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+              <p class="text-xs uppercase text-blue-600 tracking-wide font-semibold">Vehículos disponibles</p>
+              <p class="text-3xl font-bold text-blue-600 mt-2">${formatNumber(availabilityMetrics.availableCount, '0')}</p>
+            </div>
+            <div class="p-4 bg-slate-50 border border-slate-200 rounded-lg">
+              <p class="text-xs uppercase text-slate-600 tracking-wide font-semibold">En taller / fuera de servicio</p>
+              <p class="text-3xl font-bold text-slate-600 mt-2">${formatNumber(availabilityMetrics.inShopCount, '0')}</p>
+            </div>
+            <div class="p-4 bg-sky-50 border border-sky-200 rounded-lg">
+              <p class="text-xs uppercase text-sky-600 tracking-wide font-semibold">Disponibilidad de flota</p>
+              <p class="text-3xl font-bold text-sky-600 mt-2">${availabilityMetrics.availabilityPercent !== null ? `${availabilityMetrics.availabilityPercent.toFixed(1)}%` : 'N/D'}</p>
+            </div>
+          </article>
+          <article class="rounded-2xl border border-slate-200 bg-slate-50 p-5 shadow-sm">
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <p class="text-xs uppercase tracking-wide font-semibold text-slate-600">En taller / fuera de servicio</p>
+                <p class="mt-2 text-3xl font-bold text-slate-700">${formatNumber(availabilityMetrics.inShopCount, '0')}</p>
+                <p class="mt-3 text-xs text-slate-500">Registros con estado operativo restringido.</p>
+              </div>
+              <span class="inline-flex h-10 w-10 items-center justify-center rounded-full bg-slate-500/10 text-slate-600">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="h-6 w-6">
+                  <path d="M3 21v-4a4 4 0 0 1 4-4h3" />
+                  <path d="M16 3l5 5-9.5 9.5a2.12 2.12 0 0 1-3 0l-1-1a2.12 2.12 0 0 1 0-3Z" />
+                </svg>
+              </span>
+            </div>
+          </article>
+          <article class="rounded-2xl border border-red-200 bg-red-50 p-5 shadow-sm">
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <p class="text-xs uppercase tracking-wide font-semibold text-red-600">Mantención vencida</p>
+                <p class="mt-2 text-3xl font-bold text-red-600">${formatNumber(dueNow, '0')}</p>
+                <p class="mt-3 text-xs text-red-600/70">Requieren intervención inmediata.</p>
+              </div>
+              <span class="inline-flex h-10 w-10 items-center justify-center rounded-full bg-red-500/10 text-red-600">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="h-6 w-6">
+                  <path d="M12 9v4" />
+                  <path d="M12 17h.01" />
+                  <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z" />
+                </svg>
+              </span>
+            </div>
           </div>
         `;
       }
@@ -2054,6 +2112,7 @@
         button.classList.add('opacity-60');
         button.setAttribute('aria-disabled', 'true');
       }
+      button.disabled = !complete;
       return complete;
     }
 
@@ -2108,6 +2167,9 @@
         generateButton.removeAttribute('aria-busy');
         generateButton.classList.add('opacity-60');
         generateButton.setAttribute('aria-disabled', 'true');
+        generateButton.disabled = true;
+        generateButton.textContent = 'Generar solicitud';
+        generateButton.removeAttribute('aria-busy');
       }
     }
 
@@ -2245,6 +2307,10 @@
               </figure>
             `;
           }).join('');
+          photosContainer.innerHTML = tiresWithPhotos.map(tire => `<figure class="bg-gray-50 border border-gray-200 rounded-lg overflow-hidden">
+              <img src="${tire.photoURL}" alt="${tire.position || 'Neumático'}" class="w-full h-32 object-cover" />
+              <figcaption class="px-3 py-2 text-xs text-gray-600">${tire.position || 'Posición'} · ${tire.makeModel || ''}</figcaption>
+            </figure>`).join('');
         }
       }
 
@@ -2565,6 +2631,7 @@
             return { tire, status: 'fulfilled', imageBase64: base64 };
           } catch (error) {
             console.warn(`No se pudo cargar la imagen para ${tire.position}:`, error);
+            console.error(`No se pudo cargar la imagen para ${tire.position}:`, error);
             return { tire, status: 'rejected' };
           }
         });
@@ -3363,6 +3430,13 @@
             ${kpmmCell}
             <td class="px-4 py-3 whitespace-nowrap text-right text-sm font-medium">
               <div class="flex items-center justify-end gap-2">
+                <button onclick="window.openTireRequest('${record.id}')" class="text-blue-600 hover:text-blue-800 p-2 rounded-lg transition hover:bg-blue-100 flex items-center gap-2" title="Crear solicitud de neumáticos">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                    <path d="M8 1a.75.75 0 0 1 .75.75V7.25h5.5a.75.75 0 0 1 0 1.5h-5.5v5.5a.75.75 0 0 1-1.5 0v-5.5h-5.5a.75.75 0 0 1 0-1.5h5.5V1.75A.75.75 0 0 1 8 1Z"/>
+                  </svg>
+                  <span class="hidden sm:inline">Crear solicitud de neumáticos</span>
+                  <span class="sm:hidden">Solicitud</span>
+                </button>
                 <button onclick="window.generatePdf('${record.id}')" class="text-red-600 hover:text-red-800 p-2 rounded-lg transition hover:bg-red-100" title="Generar PDF">
                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
                     <path d="M14 14V4.5L9.5 0H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2zM9.5 1.5L14 6v8.5a.5.5 0 0 1-.5.5H4a.5.5 0 0 1-.5-.5v-12A.5.5 0 0 1 4 1.5h5.5z"/>
@@ -4078,7 +4152,38 @@
                           <label for="dashboardVehicleFilter" class="text-xs font-semibold uppercase tracking-wide text-gray-500">Tipo de vehículo</label>
                           <select id="dashboardVehicleFilter" class="filter-input bg-white w-full min-w-[10rem]"></select>
                         </div>
+          <section id="dashboardSection" class="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+            <div class="flex flex-wrap items-start justify-between gap-4">
+              <h3 class="text-2xl font-bold text-gray-800">Dashboard de Mantenciones Preventivas</h3>
+              <span id="dashboardUpdatedAt" class="text-sm text-gray-500"></span>
+            </div>
+            <div id="dashboardEmptyState" class="rounded-2xl border border-dashed border-emerald-200 bg-white/70 p-8 text-sm text-emerald-700 shadow-inner">
+              Aún no hay datos cargados. Importa la planilla de flota para visualizar el estado de las mantenciones.
+            </div>
+            <div id="dashboardContent" class="mt-6 hidden">
+              <div id="dashboardSummary"></div>
+              <div class="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div class="bg-white border border-gray-200 rounded-lg shadow-sm p-4">
+                  <div class="flex flex-col gap-4">
+                    <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+                      <h4 class="text-lg font-semibold text-gray-700">Estado de mantención</h4>
+                      <div class="flex flex-col gap-3 w-full lg:w-auto">
+                        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-end gap-3">
+                          <div class="flex flex-col gap-1 sm:items-end">
+                            <span class="text-xs font-medium text-gray-600 uppercase tracking-wide sm:text-right">Sucursal</span>
+                            <div id="dashboardBranchButtons" class="flex flex-wrap gap-2 sm:justify-end"></div>
+                          </div>
+                          <div class="flex items-center gap-2">
+                            <label for="dashboardVehicleFilter" class="text-xs font-medium text-gray-600 uppercase tracking-wide">Vehículo</label>
+                            <select id="dashboardVehicleFilter" class="filter-input bg-white w-auto min-w-[9rem]"></select>
+                          </div>
+                        </div>
+                        <span id="fleetAvailabilityBadge" class="inline-flex items-center justify-center sm:justify-end px-3 py-1 rounded-full border border-gray-300 text-xs font-semibold text-gray-600 bg-gray-50">Disponibilidad: —</span>
                       </div>
+                      <div id="dashboardStatusFilters" class="flex flex-wrap gap-2 justify-start xl:justify-end"></div>
+                    </div>
+                    <div class="relative h-72">
+                      <canvas id="maintenanceStatusChart"></canvas>
                     </div>
                     <div class="px-6 py-4">
                       <div id="dashboardStatusFilters" class="flex flex-wrap gap-2"></div>
@@ -4105,11 +4210,22 @@
                       <table class="min-w-full text-sm">
                         <thead>
                           <tr class="text-left text-xs uppercase tracking-wide text-gray-500">
+                  </div>
+                </div>
+                <div class="rounded-2xl border border-gray-200 bg-white shadow-sm">
+                  <div class="p-6">
+                    <h4 class="text-lg font-semibold text-gray-800">Prioridad de intervención</h4>
+                    <p class="text-sm text-gray-500 mb-4">Ordenado por kilómetros restantes para la próxima mantención preventiva.</p>
+                    <div class="overflow-y-auto max-h-80">
+                      <table class="min-w-full text-sm">
+                        <thead>
+                          <tr class="text-left text-xs uppercase tracking-wide text-gray-500 border-b">
                             <th class="px-2 py-2">Orden</th>
                             <th class="px-2 py-2">Patente</th>
                             <th class="px-2 py-2">Falta</th>
                             <th class="px-2 py-2">Estado</th>
                             <th class="px-2 py-2">Última mantención</th>
+                            <th class="px-2 py-2">Última Mantención</th>
                           </tr>
                         </thead>
                         <tbody id="dashboardDetailBody"></tbody>
@@ -4189,7 +4305,7 @@
             </div>
             <p class="text-sm text-gray-600 mt-2">
               Importa el archivo actualizado con las columnas <strong>Tipo de Transporte, Status, N° de Movil, Patente, Marca, Modelo, Año, Zonal, Último kilometraje, Fecha Último kilometraje, Km. Recorrido, Km. última Mantención, Fecha última Mantención, Pauta última Mantención, Kms de Mant., Falta y Estado MP</strong>.
-              El sistema validará la hoja <em>"Flota Verschae"</em> y actualizará los datos disponibles en el formulario y en el dashboard.
+              El sistema validará la hoja <em>"Flota Verschae PIW"</em> y actualizará los datos disponibles en el formulario y en el dashboard.
             </p>
             <div class="mt-4 flex flex-wrap items-center gap-3">
               <button type="button" onclick="requestFleetUpload()" class="px-4 py-2 bg-primary text-white text-sm font-semibold rounded-lg shadow-sm hover:bg-secondary transition">
@@ -4357,6 +4473,7 @@
                 <p id="tireRequestCachedNotice" class="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 hidden"></p>
                 <div class="flex flex-col sm:flex-row sm:justify-end sm:items-center gap-3 pt-4 border-t border-gray-100">
                   <button type="button" id="tireRequestGenerateButton" class="px-4 py-2 bg-blue-600 text-white text-sm font-semibold rounded-lg shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 opacity-60" aria-disabled="true">Generar solicitud</button>
+                  <button type="button" id="tireRequestGenerateButton" class="px-4 py-2 bg-blue-600 text-white text-sm font-semibold rounded-lg shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50">Generar solicitud</button>
                   <button type="button" id="tireRequestCancelButton" class="px-4 py-2 text-sm font-semibold text-gray-600 rounded-lg hover:text-gray-800 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-300">Cancelar</button>
                 </div>
               </form>
