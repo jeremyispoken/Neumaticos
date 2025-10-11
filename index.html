@@ -107,12 +107,7 @@
       NEW: 'nuevo',
       CONTROL: 'control',
     };
-    const AVAILABILITY_BADGE_BASE_CLASS = 'inline-flex items-center gap-2 px-4 py-1.5 rounded-full border text-sm font-semibold shadow-sm backdrop-blur';
-    const PHOTO_FALLBACK_DATA_URL = 'data:image/svg+xml;charset=UTF-8,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="240" viewBox="0 0 400 240" preserveAspectRatio="xMidYMid slice"><defs><linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="%23059669" stop-opacity="0.85"/><stop offset="100%" stop-color="%2310b981" stop-opacity="0.85"/></linearGradient></defs><rect width="400" height="240" fill="url(%23g)"/><g fill="%23ffffff" opacity="0.82"><path d="M128 96c0-17.673 14.327-32 32-32h80c17.673 0 32 14.327 32 32v48c0 17.673-14.327 32-32 32h-80c-17.673 0-32-14.327-32-32V96zm36 0c0-8.837 7.163-16 16-16h64c8.837 0 16 7.163 16 16v48c0 8.837-7.163 16-16 16h-64c-8.837 0-16-7.163-16-16V96z"/><circle cx="168" cy="152" r="14"/><circle cx="232" cy="152" r="14"/></g><text x="200" y="214" font-size="22" fill="%23ecfdf5" text-anchor="middle" font-family="'Inter',sans-serif">Sin imagen disponible</text></svg>';
-    function getAvailabilityBadgeBaseClass() {
-      return AVAILABILITY_BADGE_BASE_CLASS;
-    }
-    const FLEET_SHEET_NAME = 'Flota Verschae';
+    const FLEET_SHEET_NAME = 'Flota Verschae PIW';
     const FLEET_DATA_STORAGE_KEY = 'flota-track-fleet-dataset-v1';
     const FLEET_DATA_META_STORAGE_KEY = 'flota-track-fleet-dataset-meta-v1';
     const ORDER_KEYWORDS = ['orden', 'n° orden', 'nº orden', 'numero orden', 'orden vehículo', 'orden vehiculo'];
@@ -587,7 +582,7 @@
       if (!orderInput || !feedback) return;
       if (status === 'loading') {
         orderInput.placeholder = 'Buscando catálogo de flota...';
-        feedback.textContent = 'Restaurando la hoja "Flota Verschae" almacenada en este navegador...';
+        feedback.textContent = 'Restaurando la hoja "Flota Verschae PIW" almacenada en este navegador...';
         feedback.className = 'mt-1 text-xs text-gray-500';
       } else if (status === 'ready') {
         orderInput.placeholder = 'Escribe o selecciona una orden de la flota';
@@ -674,7 +669,7 @@
       } else {
         orderInput.classList.add('input-invalid');
         orderInput.classList.remove('input-valid');
-        orderInput.setCustomValidity('Número de móvil no encontrado en la hoja "Flota Verschae". Revisa la columna C.');
+        orderInput.setCustomValidity('Número de móvil no encontrado en la hoja "Flota Verschae PIW". Revisa la columna C.');
         if (feedback) {
           feedback.textContent = 'Número incorrecto. Confirma el N° de móvil (columna C) en la planilla.';
           feedback.className = 'mt-1 text-xs text-red-600';
@@ -1030,7 +1025,7 @@
 
     function getStatusChipClasses(status, isActive) {
       const key = getStatusKey(status);
-      const base = 'px-3.5 py-1.5 rounded-full text-xs font-semibold border transition backdrop-blur-sm focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-emerald-200/70';
+      const base = 'px-3 py-1 rounded-full text-xs font-medium transition border';
       const palette = {
         vencido: {
           active: 'bg-red-500 text-white border-red-500 shadow-sm',
@@ -1062,10 +1057,10 @@
     }
 
     function getBranchButtonClasses(isActive) {
-      const base = 'px-3.5 py-1.5 rounded-full text-xs font-semibold border transition focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-200/70 backdrop-blur-sm';
+      const base = 'px-3 py-1 rounded-full text-xs font-medium transition border';
       return isActive
-        ? `${base} bg-white text-emerald-700 border-white shadow-lg shadow-emerald-900/10`
-        : `${base} bg-emerald-500/25 text-emerald-50 border-emerald-200/40 hover:bg-white/15 hover:text-white`;
+        ? `${base} bg-primary text-white border-primary shadow-sm`
+        : `${base} bg-white text-gray-600 border-gray-300 hover:border-primary hover:text-primary`;
     }
 
     function getAvailabilityCategory(status) {
@@ -1106,11 +1101,10 @@
     function updateAvailabilityBadge(metrics) {
       const badge = document.getElementById('fleetAvailabilityBadge');
       if (!badge) return;
-      const baseClassName = getAvailabilityBadgeBaseClass();
+      const AVAILABILITY_BADGE_BASE_CLASS = 'inline-block px-3 py-1 rounded-full text-xs font-medium transition';
       if (!metrics || metrics.totalTracked === 0 || metrics.availabilityPercent === null) {
         badge.textContent = 'Disponibilidad: N/D';
-        badge.setAttribute('aria-label', 'Disponibilidad de flota no disponible');
-        badge.className = `${baseClassName} border-slate-200 text-slate-600 bg-white/70`;
+        badge.className = `${baseClass} border-gray-300 text-gray-500 bg-gray-50`;
         return;
       }
       const percentValue = metrics.availabilityPercent;
@@ -1121,8 +1115,7 @@
         palette = 'border-red-200 text-red-700 bg-red-50';
       }
       badge.textContent = `Disponibilidad: ${percentValue.toFixed(1)}%`;
-      badge.setAttribute('aria-label', `Disponibilidad de flota ${percentValue.toFixed(1)} por ciento`);
-      badge.className = `${baseClassName} ${palette}`;
+      badge.className = `${baseClass} ${palette}`;
     }
 
     function showFleetUploadFeedback(message, type = 'info') {
@@ -1255,9 +1248,6 @@
           vehicleSelect.innerHTML = '<option value="Todos">Todos</option>';
           vehicleSelect.value = 'Todos';
         }
-        if (summary) {
-          summary.innerHTML = '';
-        }
         updateAvailabilityBadge(null);
         if (maintenanceStatusChart) {
           maintenanceStatusChart.destroy();
@@ -1348,32 +1338,23 @@
 
       if (summary) {
         summary.innerHTML = `
-          <article class="rounded-2xl border border-emerald-100 bg-emerald-50/80 p-5 shadow-sm backdrop-blur-sm">
-            <div class="flex items-start justify-between gap-3">
-              <div>
-                <p class="text-xs uppercase tracking-wide font-semibold text-emerald-700">Flota analizada</p>
-                <p class="mt-2 text-3xl font-bold text-emerald-900">${formatNumber(filteredEntries.length, '0')}</p>
-              </div>
-              <span class="inline-flex h-10 w-10 items-center justify-center rounded-full bg-emerald-600/15 text-emerald-700">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="h-6 w-6">
-                  <path d="M3 13h1l2.68-5.37A2 2 0 0 1 8.47 6h7.06a2 2 0 0 1 1.79 1.04L20 13h1a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-1.18a2.82 2.82 0 0 1-5.64 0H9.82a2.82 2.82 0 0 1-5.64 0H3a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1Z" />
-                </svg>
-              </span>
+          <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-6 gap-4">
+            <div class="p-4 bg-primary/10 border border-primary/30 rounded-lg">
+              <p class="text-xs uppercase text-primary tracking-wide font-semibold">Vehículos en selección</p>
+              <p class="text-3xl font-bold text-primary mt-2">${formatNumber(filteredEntries.length, '0')}</p>
+              <p class="mt-3 text-xs text-primary/80">Kilometraje promedio: ${averageMileage !== null ? formatNumber(averageMileage, '0') + ' km' : 'N/D'}</p>
             </div>
-            <p class="mt-3 text-xs text-emerald-900/80">Kilometraje promedio: ${averageMileage !== null ? `${formatNumber(averageMileage, '0')} km` : 'N/D'}</p>
-          </article>
-          <article class="rounded-2xl border border-blue-100 bg-blue-50/70 p-5 shadow-sm">
-            <div class="flex items-start justify-between gap-3">
-              <div>
-                <p class="text-xs uppercase tracking-wide font-semibold text-blue-700">Vehículos disponibles</p>
-                <p class="mt-2 text-3xl font-bold text-blue-700">${formatNumber(availabilityMetrics.availableCount, '0')}</p>
-                <p class="mt-3 text-xs text-blue-700/70">Disponibilidad de flota: ${availabilityMetrics.availabilityPercent !== null ? `${availabilityMetrics.availabilityPercent.toFixed(1)}%` : 'N/D'}</p>
-              </div>
-              <span class="inline-flex h-10 w-10 items-center justify-center rounded-full bg-blue-500/15 text-blue-700">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="h-6 w-6">
-                  <path d="M5 13l4 4L19 7" />
-                </svg>
-              </span>
+            <div class="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+              <p class="text-xs uppercase text-blue-600 tracking-wide font-semibold">Vehículos disponibles</p>
+              <p class="text-3xl font-bold text-blue-600 mt-2">${formatNumber(availabilityMetrics.availableCount, '0')}</p>
+            </div>
+            <div class="p-4 bg-slate-50 border border-slate-200 rounded-lg">
+              <p class="text-xs uppercase text-slate-600 tracking-wide font-semibold">En taller / fuera de servicio</p>
+              <p class="text-3xl font-bold text-slate-600 mt-2">${formatNumber(availabilityMetrics.inShopCount, '0')}</p>
+            </div>
+            <div class="p-4 bg-sky-50 border border-sky-200 rounded-lg">
+              <p class="text-xs uppercase text-sky-600 tracking-wide font-semibold">Disponibilidad de flota</p>
+              <p class="text-3xl font-bold text-sky-600 mt-2">${availabilityMetrics.availabilityPercent !== null ? `${availabilityMetrics.availabilityPercent.toFixed(1)}%` : 'N/D'}</p>
             </div>
           </article>
           <article class="rounded-2xl border border-slate-200 bg-slate-50 p-5 shadow-sm">
@@ -1406,22 +1387,7 @@
                 </svg>
               </span>
             </div>
-          </article>
-          <article class="rounded-2xl border border-amber-200 bg-amber-50 p-5 shadow-sm">
-            <div class="flex items-start justify-between gap-3">
-              <div>
-                <p class="text-xs uppercase tracking-wide font-semibold text-amber-600">Próximas mantenciones</p>
-                <p class="mt-2 text-3xl font-bold text-amber-600">${formatNumber(dueSoon, '0')}</p>
-                <p class="mt-3 text-xs text-amber-600/70">A menos de ${DEFAULT_KM_ALERT_THRESHOLD.toLocaleString('es-CL')} km del servicio.</p>
-              </div>
-              <span class="inline-flex h-10 w-10 items-center justify-center rounded-full bg-amber-500/10 text-amber-600">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="h-6 w-6">
-                  <path d="M12 6v6l3 3" />
-                  <circle cx="12" cy="12" r="9" />
-                </svg>
-              </span>
-            </div>
-          </article>
+          </div>
         `;
       }
 
@@ -2092,18 +2058,7 @@
       if (!button) return false;
       const values = getTireRequestFormValues();
       const complete = isTireRequestFormComplete(values);
-      if (button.dataset.busy === 'true') {
-        button.disabled = true;
-        button.classList.add('opacity-75', 'cursor-wait');
-        button.classList.remove('cursor-not-allowed');
-        button.setAttribute('aria-disabled', 'true');
-        return complete;
-      }
-      button.disabled = false;
-      button.classList.toggle('opacity-60', !complete);
-      button.classList.toggle('cursor-not-allowed', !complete);
-      button.classList.remove('cursor-wait');
-      button.setAttribute('aria-disabled', complete ? 'false' : 'true');
+      button.disabled = !complete;
       return complete;
     }
 
@@ -2122,25 +2077,6 @@
         ? `Solicitud generada el ${formatted}. Puedes actualizar los campos antes de volver a generar.`
         : 'Existe una solicitud previa para este registro. Puedes generar una nueva con los mismos datos.';
       notice.classList.remove('hidden');
-    }
-
-    function applyPhotoFallbacks(container) {
-      if (!container) return;
-      const images = container.querySelectorAll('img[data-photo]');
-      images.forEach((img) => {
-        if (!img) return;
-        img.loading = 'lazy';
-        img.decoding = 'async';
-        img.referrerPolicy = 'no-referrer';
-        const handleError = () => {
-          if (img.dataset.fallbackApplied === 'true') return;
-          img.dataset.fallbackApplied = 'true';
-          img.src = PHOTO_FALLBACK_DATA_URL;
-          img.classList.add('bg-emerald-50', 'object-cover');
-          img.alt = `${img.alt || 'Fotografía'} (no disponible)`;
-        };
-        img.addEventListener('error', handleError, { once: true });
-      });
     }
 
     function clearTireRequestModal() {
@@ -2172,11 +2108,9 @@
       showTireRequestCachedNotice(null);
       const generateButton = document.getElementById('tireRequestGenerateButton');
       if (generateButton) {
-        delete generateButton.dataset.busy;
-        generateButton.disabled = false;
+        generateButton.disabled = true;
         generateButton.textContent = 'Generar solicitud';
         generateButton.removeAttribute('aria-busy');
-        generateButton.classList.remove('cursor-wait', 'opacity-75', 'opacity-60', 'cursor-not-allowed');
       }
     }
 
@@ -2286,10 +2220,9 @@
           photosContainer.innerHTML = '<p class="col-span-full text-sm text-gray-500">No hay fotografías adjuntas para este registro.</p>';
         } else {
           photosContainer.innerHTML = tiresWithPhotos.map(tire => `<figure class="bg-gray-50 border border-gray-200 rounded-lg overflow-hidden">
-              <img src="${tire.photoURL}" alt="${tire.position || 'Neumático'}" class="w-full h-32 object-cover" data-photo="tire" />
+              <img src="${tire.photoURL}" alt="${tire.position || 'Neumático'}" class="w-full h-32 object-cover" />
               <figcaption class="px-3 py-2 text-xs text-gray-600">${tire.position || 'Posición'} · ${tire.makeModel || ''}</figcaption>
             </figure>`).join('');
-          applyPhotoFallbacks(photosContainer);
         }
       }
 
@@ -2609,7 +2542,7 @@
             });
             return { tire, status: 'fulfilled', imageBase64: base64 };
           } catch (error) {
-            console.warn(`No se pudo cargar la imagen para ${tire.position}:`, error);
+            console.error(`No se pudo cargar la imagen para ${tire.position}:`, error);
             return { tire, status: 'rejected' };
           }
         });
@@ -2661,12 +2594,9 @@
       const unitValueInput = document.getElementById('tireRequestUnitValue');
 
       if (generateButton) {
-        generateButton.dataset.busy = 'true';
         generateButton.disabled = true;
         generateButton.textContent = 'Generando...';
         generateButton.setAttribute('aria-busy', 'true');
-        generateButton.classList.remove('opacity-60', 'cursor-not-allowed');
-        generateButton.classList.add('cursor-wait');
       }
 
       displayAppMessage('Generando solicitud de neumáticos...', 'info');
@@ -2694,7 +2624,6 @@
         displayAppMessage(`No se pudo generar la solicitud: ${error.message}`, 'error');
       } finally {
         if (generateButton) {
-          delete generateButton.dataset.busy;
           generateButton.textContent = 'Generar solicitud';
           generateButton.removeAttribute('aria-busy');
         }
@@ -3409,18 +3338,18 @@
             ${kpmmCell}
             <td class="px-4 py-3 whitespace-nowrap text-right text-sm font-medium">
               <div class="flex items-center justify-end gap-2">
-                <button onclick="window.generatePdf('${record.id}')" class="text-red-600 hover:text-red-800 p-2 rounded-lg transition hover:bg-red-100" title="Generar PDF">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
-                    <path d="M14 14V4.5L9.5 0H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2zM9.5 1.5L14 6v8.5a.5.5 0 0 1-.5.5H4a.5.5 0 0 1-.5-.5v-12A.5.5 0 0 1 4 1.5h5.5z"/>
-                    <path d="M4.603 12.087a.81.81 0 0 1-.438.448l-.175.082a.558.558 0 0 1-.685-.28.52.52 0 0 1 .035-.634l.116-.117.175-.082a.81.81 0 0 1 .438-.448l.175-.082.685.28a.52.52 0 0 1-.035.634l-.116.117-.175.082zm1.833-1.422a.512.512 0 0 1-.028.682l-.206.206a.512.512 0 0 1-.682.028l-.206-.206a.512.512 0 0 1 .028-.682l.206-.206a.512.512 0 0 1 .682-.028l.206.206zm.208.64a.512.512 0 0 1-.028.682l-.206.206a.512.512 0 0 1-.682.028l-.206-.206a.512.512 0 0 1 .028-.682l.206-.206a.512.512 0 0 1 .682-.028l.206.206zm1.758-1.55a.512.512 0 0 1 .686.252l.206.411a.512.512 0 0 1-.252.686l-.411.206a.512.512 0 0 1-.686-.252l-.206-.411a.512.512 0 0 1 .252-.686l.411.206zm.686.645a.512.512 0 0 1 .252.686l-.206.411a.512.512 0 0 1-.686.252l-.411-.206a.512.512 0 0 1-.252-.686l.206-.411a.512.512 0 0 1 .686-.252l.411.206zM8.579 14.3a.512.512 0 0 1 .252.686l-.206.411a.512.512 0 0 1-.686.252l-.411-.206a.512.512 0 0 1-.252-.686l.206-.411a.512.512 0 0 1 .686-.252l.411.206zm2.814-2.97a.512.512 0 0 1 .686.252l.206.411a.512.512 0 0 1-.252.686l-.411.206a.512.512 0 0 1-.686-.252l-.206-.411a.512.512 0 0 1 .252-.686l.411.206zm.686.645a.512.512 0 0 1 .252.686l-.206.411a.512.512 0 0 1-.686.252l-.411-.206a.512.512 0 0 1-.252-.686l.206-.411a.512.512 0 0 1 .686-.252l.411.206zM11.803 14.3a.512.512 0 0 1 .252.686l-.206.411a.512.512 0 0 1-.686.252l-.411-.206a.512.512 0 0 1-.252-.686l.206-.411a.512.512 0 0 1 .686-.252l.411.206z"/>
-                  </svg>
-                </button>
                 <button onclick="window.openTireRequest('${record.id}')" class="text-blue-600 hover:text-blue-800 p-2 rounded-lg transition hover:bg-blue-100 flex items-center gap-2" title="Crear solicitud de neumáticos">
                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
                     <path d="M8 1a.75.75 0 0 1 .75.75V7.25h5.5a.75.75 0 0 1 0 1.5h-5.5v5.5a.75.75 0 0 1-1.5 0v-5.5h-5.5a.75.75 0 0 1 0-1.5h5.5V1.75A.75.75 0 0 1 8 1Z"/>
                   </svg>
                   <span class="hidden sm:inline">Crear solicitud de neumáticos</span>
                   <span class="sm:hidden">Solicitud</span>
+                </button>
+                <button onclick="window.generatePdf('${record.id}')" class="text-red-600 hover:text-red-800 p-2 rounded-lg transition hover:bg-red-100" title="Generar PDF">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                    <path d="M14 14V4.5L9.5 0H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2zM9.5 1.5L14 6v8.5a.5.5 0 0 1-.5.5H4a.5.5 0 0 1-.5-.5v-12A.5.5 0 0 1 4 1.5h5.5z"/>
+                    <path d="M4.603 12.087a.81.81 0 0 1-.438.448l-.175.082a.558.558 0 0 1-.685-.28.52.52 0 0 1 .035-.634l.116-.117.175-.082a.81.81 0 0 1 .438-.448l.175-.082.685.28a.52.52 0 0 1-.035.634l-.116.117-.175.082zm1.833-1.422a.512.512 0 0 1-.028.682l-.206.206a.512.512 0 0 1-.682.028l-.206-.206a.512.512 0 0 1 .028-.682l.206-.206a.512.512 0 0 1 .682-.028l.206.206zm.208.64a.512.512 0 0 1-.028.682l-.206.206a.512.512 0 0 1-.682.028l-.206-.206a.512.512 0 0 1 .028-.682l.206-.206a.512.512 0 0 1 .682-.028l.206.206zm1.758-1.55a.512.512 0 0 1 .686.252l.206.411a.512.512 0 0 1-.252.686l-.411.206a.512.512 0 0 1-.686-.252l-.206-.411a.512.512 0 0 1 .252-.686l.411.206zm.686.645a.512.512 0 0 1 .252.686l-.206.411a.512.512 0 0 1-.686.252l-.411-.206a.512.512 0 0 1-.252-.686l.206-.411a.512.512 0 0 1 .686-.252l.411.206zM8.579 14.3a.512.512 0 0 1 .252.686l-.206.411a.512.512 0 0 1-.686.252l-.411-.206a.512.512 0 0 1-.252-.686l.206-.411a.512.512 0 0 1 .686-.252l.411.206zm2.814-2.97a.512.512 0 0 1 .686.252l.206.411a.512.512 0 0 1-.252.686l-.411.206a.512.512 0 0 1-.686-.252l-.206-.411a.512.512 0 0 1 .252-.686l.411.206zm.686.645a.512.512 0 0 1 .252.686l-.206.411a.512.512 0 0 1-.686.252l-.411-.206a.512.512 0 0 1-.252-.686l.206-.411a.512.512 0 0 1 .686-.252l.411.206zM11.803 14.3a.512.512 0 0 1 .252.686l-.206.411a.512.512 0 0 1-.686.252l-.411-.206a.512.512 0 0 1-.252-.686l.206-.411a.512.512 0 0 1 .686-.252l.411.206z"/>
+                  </svg>
                 </button>
               </div>
             </td>
@@ -4087,45 +4016,33 @@
       </div>
       <div id="tab-content-maintenance" class="hidden">
         <div class="space-y-8">
-          <section id="dashboardSection" class="space-y-6">
-            <div class="relative overflow-hidden rounded-3xl border border-emerald-200/60 bg-gradient-to-r from-emerald-600 via-emerald-500 to-teal-500 text-white shadow-xl">
-              <div class="relative z-10 px-6 py-8 lg:px-10 lg:py-10 space-y-6">
-                <div class="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
-                  <div class="max-w-2xl">
-                    <h3 class="text-3xl font-bold">Dashboard de Mantenciones Preventivas</h3>
-                    <p class="mt-2 text-sm text-emerald-100/90">Monitorea el estado de las mantenciones, la disponibilidad operativa y las alertas críticas de la flota por sucursal o a nivel general.</p>
-                  </div>
-                  <div class="flex flex-col items-start gap-3 lg:items-end">
-                    <span id="dashboardUpdatedAt" class="text-sm text-emerald-100/90"></span>
-                    <span id="fleetAvailabilityBadge" class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border border-white/40 bg-white/10 text-sm font-semibold text-white shadow-sm backdrop-blur">Disponibilidad: —</span>
-                  </div>
-                </div>
-                <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                  <div class="flex flex-col gap-2">
-                    <span class="text-xs font-semibold uppercase tracking-wide text-emerald-100">Sucursales</span>
-                    <div id="dashboardBranchButtons" class="flex flex-wrap gap-2"></div>
-                  </div>
-                  <div class="flex items-center gap-3">
-                    <label for="dashboardVehicleFilter" class="text-xs font-semibold uppercase tracking-wide text-emerald-100">Tipo de vehículo</label>
-                    <select id="dashboardVehicleFilter" class="min-w-[9rem] rounded-xl border border-white/60 bg-white/90 px-3 py-1.5 text-sm font-medium text-emerald-700 shadow-sm transition focus:border-white focus:outline-none focus:ring-2 focus:ring-emerald-200/80"></select>
-                  </div>
-                </div>
-              </div>
-              <div class="absolute inset-y-0 right-0 w-1/2 bg-emerald-400/20 blur-3xl"></div>
-              <div class="absolute -bottom-12 -left-8 h-32 w-32 rounded-full bg-white/10 blur-2xl"></div>
+          <section id="dashboardSection" class="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+            <div class="flex flex-wrap items-start justify-between gap-4">
+              <h3 class="text-2xl font-bold text-gray-800">Dashboard de Mantenciones Preventivas</h3>
+              <span id="dashboardUpdatedAt" class="text-sm text-gray-500"></span>
             </div>
             <div id="dashboardEmptyState" class="rounded-2xl border border-dashed border-emerald-200 bg-white/70 p-8 text-sm text-emerald-700 shadow-inner">
               Aún no hay datos cargados. Importa la planilla de flota para visualizar el estado de las mantenciones.
             </div>
-            <div id="dashboardContent" class="hidden space-y-6">
-              <div id="dashboardSummary" class="grid gap-4 sm:grid-cols-2 xl:grid-cols-5"></div>
-              <div class="grid gap-6 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
-                <div class="rounded-2xl border border-gray-200 bg-white shadow-sm">
-                  <div class="flex flex-col gap-5 p-6">
-                    <div class="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-                      <div>
-                        <h4 class="text-lg font-semibold text-gray-800">Estado de mantención</h4>
-                        <p class="text-sm text-gray-500">Distribución de vehículos según su estado preventivo.</p>
+            <div id="dashboardContent" class="mt-6 hidden">
+              <div id="dashboardSummary"></div>
+              <div class="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div class="bg-white border border-gray-200 rounded-lg shadow-sm p-4">
+                  <div class="flex flex-col gap-4">
+                    <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+                      <h4 class="text-lg font-semibold text-gray-700">Estado de mantención</h4>
+                      <div class="flex flex-col gap-3 w-full lg:w-auto">
+                        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-end gap-3">
+                          <div class="flex flex-col gap-1 sm:items-end">
+                            <span class="text-xs font-medium text-gray-600 uppercase tracking-wide sm:text-right">Sucursal</span>
+                            <div id="dashboardBranchButtons" class="flex flex-wrap gap-2 sm:justify-end"></div>
+                          </div>
+                          <div class="flex items-center gap-2">
+                            <label for="dashboardVehicleFilter" class="text-xs font-medium text-gray-600 uppercase tracking-wide">Vehículo</label>
+                            <select id="dashboardVehicleFilter" class="filter-input bg-white w-auto min-w-[9rem]"></select>
+                          </div>
+                        </div>
+                        <span id="fleetAvailabilityBadge" class="inline-flex items-center justify-center sm:justify-end px-3 py-1 rounded-full border border-gray-300 text-xs font-semibold text-gray-600 bg-gray-50">Disponibilidad: —</span>
                       </div>
                       <div id="dashboardStatusFilters" class="flex flex-wrap gap-2 justify-start xl:justify-end"></div>
                     </div>
@@ -4226,7 +4143,7 @@
             </div>
             <p class="text-sm text-gray-600 mt-2">
               Importa el archivo actualizado con las columnas <strong>Tipo de Transporte, Status, N° de Movil, Patente, Marca, Modelo, Año, Zonal, Último kilometraje, Fecha Último kilometraje, Km. Recorrido, Km. última Mantención, Fecha última Mantención, Pauta última Mantención, Kms de Mant., Falta y Estado MP</strong>.
-              El sistema validará la hoja <em>"Flota Verschae"</em> y actualizará los datos disponibles en el formulario y en el dashboard.
+              El sistema validará la hoja <em>"Flota Verschae PIW"</em> y actualizará los datos disponibles en el formulario y en el dashboard.
             </p>
             <div class="mt-4 flex flex-wrap items-center gap-3">
               <button type="button" onclick="requestFleetUpload()" class="px-4 py-2 bg-primary text-white text-sm font-semibold rounded-lg shadow-sm hover:bg-secondary transition">
@@ -4393,7 +4310,7 @@
                 <p class="text-xs text-gray-500">Completa estos campos para formalizar la solicitud con el proveedor correspondiente.</p>
                 <p id="tireRequestCachedNotice" class="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 hidden"></p>
                 <div class="flex flex-col sm:flex-row sm:justify-end sm:items-center gap-3 pt-4 border-t border-gray-100">
-                  <button type="button" id="tireRequestGenerateButton" class="px-4 py-2 bg-blue-600 text-white text-sm font-semibold rounded-lg shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition" aria-disabled="true">Generar solicitud</button>
+                  <button type="button" id="tireRequestGenerateButton" class="px-4 py-2 bg-blue-600 text-white text-sm font-semibold rounded-lg shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50">Generar solicitud</button>
                   <button type="button" id="tireRequestCancelButton" class="px-4 py-2 text-sm font-semibold text-gray-600 rounded-lg hover:text-gray-800 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-300">Cancelar</button>
                 </div>
               </form>
