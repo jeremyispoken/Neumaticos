@@ -2209,6 +2209,7 @@
       const brandInput = document.getElementById('tireRequestBrand');
       const modelInput = document.getElementById('tireRequestModel');
       const measureInput = document.getElementById('tireRequestMeasure');
+      const requestCommentsInput = document.getElementById('tireRequestRequestComments');
 
       const unitsValue = unitsInput ? parseInt(unitsInput.value, 10) : NaN;
       const unitValue = unitValueInput ? parseCurrencyInput(unitValueInput.value) : null;
@@ -2220,6 +2221,7 @@
         brand: brandInput ? brandInput.value.trim() : '',
         model: modelInput ? modelInput.value.trim() : '',
         measure: measureInput ? measureInput.value.trim() : '',
+        requestComments: requestCommentsInput ? requestCommentsInput.value.trim() : '',
       };
     }
 
@@ -2424,6 +2426,7 @@
         tireRequestBrand: '',
         tireRequestModel: '',
         tireRequestMeasure: sizeDisplay !== 'N/A' ? sizeDisplay : '',
+        tireRequestRequestComments: '',
       };
 
       Object.entries(formFields).forEach(([id, value]) => {
@@ -2447,6 +2450,7 @@
       const unitValueInput = document.getElementById('tireRequestUnitValue');
       const brandInput = document.getElementById('tireRequestBrand');
       const modelInput = document.getElementById('tireRequestModel');
+      const requestCommentsInput = document.getElementById('tireRequestRequestComments');
 
       const cachedForm = getCachedTireRequestForm(record.id);
       if (cachedForm) {
@@ -2471,9 +2475,15 @@
           measureInput.value = cachedForm.measure;
           updateTireRequestMeasureAlert();
         }
+        if (requestCommentsInput) {
+          requestCommentsInput.value = cachedForm.requestComments || '';
+        }
         showTireRequestCachedNotice(cachedForm.generatedAt || null);
       } else {
         showTireRequestCachedNotice(null);
+        if (requestCommentsInput) {
+          requestCommentsInput.value = '';
+        }
       }
 
       const modalBody = document.getElementById('tireRequestModalBody');
@@ -2607,6 +2617,20 @@
         doc.text(`${label}: ${value}`, 15, yPos);
         yPos += 6;
       });
+
+      if (formValues.requestComments) {
+        if (yPos > 250) {
+          doc.addPage();
+          yPos = 20;
+        }
+        doc.setFont('helvetica', 'bold');
+        doc.text('Comentarios de la solicitud', 15, yPos);
+        yPos += 6;
+        doc.setFont('helvetica', 'normal');
+        const requestCommentLines = doc.splitTextToSize(formValues.requestComments, 180);
+        doc.text(requestCommentLines, 15, yPos);
+        yPos += requestCommentLines.length * 5 + 4;
+      }
 
       const measureDiffers = sizeDisplay && formValues.measure
         && sizeDisplay.toString().trim().toUpperCase() !== formValues.measure.trim().toUpperCase();
@@ -4528,6 +4552,11 @@
                   <label for="tireRequestMeasure" class="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1">Medida</label>
                   <input type="text" id="tireRequestMeasure" class="form-control" placeholder="Ej: 295/80R22.5" />
                   <p id="tireRequestMeasureAlert" class="mt-2 text-sm text-red-600 hidden"></p>
+                </div>
+                <div>
+                  <label for="tireRequestRequestComments" class="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1">Comentarios de solicitud</label>
+                  <textarea id="tireRequestRequestComments" class="form-control" rows="3" placeholder="Instrucciones adicionales, restricciones u otros antecedentes relevantes"></textarea>
+                  <p class="mt-1 text-xs text-gray-500">Se incluirán en la solicitud generada para el proveedor.</p>
                 </div>
                 <p class="text-xs text-gray-500">Completa estos campos para formalizar la solicitud con el proveedor correspondiente.</p>
                 <p id="tireRequestCachedNotice" class="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 hidden"></p>
